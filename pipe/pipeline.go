@@ -15,6 +15,11 @@ type Env struct {
 	// The directory in which external commands should be executed by
 	// default.
 	Dir string
+
+	// Vars are extra environment variables. These will override any
+	// environment variables that would be inherited from the current
+	// process.
+	Vars []AppendVars
 }
 
 // FinishEarly is an error that can be returned by a `Stage` to
@@ -26,6 +31,22 @@ type Env struct {
 var FinishEarly = errors.New("finish stage early")
 
 //revive:enable:error-naming
+
+type AppendVars func(context.Context, []EnvVar) []EnvVar
+
+// EnvVar represents an environment variable that will be provided to any child
+// process spawned in this pipeline. Only one of ValueFunc or Value should be
+// provided.
+type EnvVar struct {
+	// The name of the environment variable.
+	Key string
+	// The value, if static.
+	Value string
+}
+
+type ContextValueFunc func(context.Context) (string, bool)
+
+type ContextValuesFunc func(context.Context) []EnvVar
 
 // Pipeline represents a Unix-like pipe that can include multiple
 // stages, including external processes but also and stages written in
@@ -93,6 +114,45 @@ func WithStdout(stdout io.Writer) Option {
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return func(p *Pipeline) {
 		p.stdout = stdout
+	}
+}
+
+// WithEnvVar appends an environment variable for the pipeline.
+func WithEnvVar(key, value string) Option {
+	return func(p *Pipeline) {
+		p.env.Vars = append(p.env.Vars, func(_ context.Context, vars []EnvVar) []EnvVar {
+			return append(vars, EnvVar{Key: key, Value: value})
+		})
+	}
+}
+
+// WithEnvVars appends several environment variable for the pipeline.
+func WithEnvVars(b []EnvVar) Option {
+	return func(p *Pipeline) {
+		p.env.Vars = append(p.env.Vars, func(_ context.Context, a []EnvVar) []EnvVar {
+			return append(a, b...)
+		})
+	}
+}
+
+// WithEnvVarFunc appends a context-based environment variable for the pipeline.
+func WithEnvVarFunc(key string, valueFunc ContextValueFunc) Option {
+	return func(p *Pipeline) {
+		p.env.Vars = append(p.env.Vars, func(ctx context.Context, vars []EnvVar) []EnvVar {
+			if val, ok := valueFunc(ctx); ok {
+				return append(vars, EnvVar{Key: key, Value: val})
+			}
+			return vars
+		})
+	}
+}
+
+// WithEnvVarsFunc appends several context-based environment variables for the pipeline.
+func WithEnvVarsFunc(valuesFunc ContextValuesFunc) Option {
+	return func(p *Pipeline) {
+		p.env.Vars = append(p.env.Vars, func(ctx context.Context, vars []EnvVar) []EnvVar {
+			return append(vars, valuesFunc(ctx)...)
+		})
 	}
 }
 
