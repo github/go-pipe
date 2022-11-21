@@ -1,8 +1,8 @@
 ## Contributing
 
-[fork]: https://github.com/github/REPO/fork
-[pr]: https://github.com/github/REPO/compare
-[style]: https://github.com/github/REPO/blob/main/.golangci.yaml
+[fork]: https://github.com/github/go-pipe/fork
+[pr]: https://github.com/github/go-pipe/compare
+[style]: https://github.com/github/go-pipe/blob/main/.golangci.yaml
 [code-of-conduct]: CODE_OF_CONDUCT.md
 
 Hi there! We're thrilled that you'd like to contribute to this project. Your help is essential for keeping it great.
