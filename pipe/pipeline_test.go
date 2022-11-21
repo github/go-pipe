@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -119,7 +118,7 @@ func TestPipelineReadFromSlowly(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 	// It's not super-intuitive, but `w` has to be closed here so that
-	// the `ioutil.ReadAll()` call above knows that it's done:
+	// the `io.ReadAll()` call above knows that it's done:
 	_ = w.Close()
 
 	assert.NoError(t, <-readErr)
@@ -164,7 +163,7 @@ func TestPipelineReadFromSlowly2(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 	// It's not super-intuitive, but `w` has to be closed here so that
-	// the `ioutil.ReadAll()` call above knows that it's done:
+	// the `io.ReadAll()` call above knows that it's done:
 	_ = w.Close()
 
 	assert.NoError(t, <-readErr)
@@ -190,7 +189,7 @@ func TestPipelineDir(t *testing.T) {
 
 	wdir, err := os.Getwd()
 	require.NoError(t, err)
-	dir, err := ioutil.TempDir(wdir, "pipeline-test-")
+	dir, err := os.MkdirTemp(wdir, "pipeline-test-")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
@@ -224,7 +223,7 @@ func TestPipelineStderr(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir, err := ioutil.TempDir("", "pipeline-test-")
+	dir, err := os.MkdirTemp("", "pipeline-test-")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
