@@ -22,8 +22,10 @@ type Env struct {
 // all of its input). This "error" is considered a successful return,
 // and is not reported to the caller.
 //
-//nolint:errname
+//revive:disable:error-naming
 var FinishEarly = errors.New("finish stage early")
+
+//revive:enable:error-naming
 
 // Pipeline represents a Unix-like pipe that can include multiple
 // stages, including external processes but also and stages written in
