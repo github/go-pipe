@@ -1,0 +1,36 @@
+# This file contains all available configuration options for golangci-lint.
+# The Go Language Working Group is currently working on a finalized version
+# of this configuration file to share with all Hubbers.
+
+linters:
+    enable:
+      - depguard
+      - errcheck
+      - exportloopref
+      - gocritic
+      - gocyclo
+      - gofmt
+      - goimports
+      - gosec
+      - gosimple
+      - govet
+      - ineffassign
+      - misspell
+      - nakedret
+      - prealloc
+      - revive
+      - staticcheck
+      - typecheck
+      - unconvert
+      - unused
+    disable:
+      - gochecknoglobals # we allow global variables in packages
+      - gochecknoinits   # we allow inits in packages
+      - goconst          # we allow repeated values to go un-const'd
+      - lll              # we allow any line length
+      - unparam          # we allow function calls to name unused parameters
+      - maligned         # clear structs are more important than saving a few bytes.
+run:
+  timeout: 5m
+  skip-dirs:
+      - internal/deprecated
