@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"syscall"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // commandStage is a pipeline `Stage` based on running an external
@@ -63,6 +64,8 @@ func (s *commandStage) Start(
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = env.Dir
 	}
+
+	s.setupEnv(ctx, env)
 
 	if stdin != nil {
 		s.cmd.Stdin = stdin
@@ -124,7 +127,7 @@ func (s *commandStage) Start(
 // `nil`).
 func (s *commandStage) filterCmdError(err error) error {
 	if err == nil {
-		return nil
+		return err
 	}
 
 	eErr, ok := err.(*exec.ExitError)
@@ -172,4 +175,53 @@ func (s *commandStage) Wait() error {
 	}
 
 	return err
+}
+
+// setupEnv sets or modifies the environment that will be passed to
+// the command.
+func (s *commandStage) setupEnv(ctx context.Context, env Env) {
+	if len(env.Vars) == 0 {
+		return
+	}
+
+	if s.cmd.Env == nil {
+		// If the caller didn't explicitly set an environment on
+		// `cmd`, then start with the current environment, and add a
+		// few environment variables that are meaningful to gitmon:
+		s.cmd.Env = os.Environ()
+	}
+
+	var vars []EnvVar
+	for _, fn := range env.Vars {
+		vars = fn(ctx, vars)
+	}
+	varMap := make(map[string]string, len(vars))
+	for _, v := range vars {
+		varMap[v.Key] = v.Value
+	}
+
+	s.cmd.Env = copyEnvWithOverrides(s.cmd.Env, varMap)
+}
+
+func copyEnvWithOverrides(myEnv []string, overrides map[string]string) []string {
+	vars := make([]string, 0, len(myEnv)+len(overrides))
+
+	for _, v := range myEnv {
+		eq := strings.Index(v, "=")
+		if eq == -1 {
+			vars = append(vars, v)
+			continue
+		}
+		key := v[:eq]
+		if _, ok := overrides[key]; ok {
+			continue
+		}
+		vars = append(vars, v)
+	}
+
+	for key, value := range overrides {
+		vars = append(vars, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	return vars
 }
