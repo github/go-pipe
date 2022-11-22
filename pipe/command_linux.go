@@ -7,12 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/github/gitrpcd/internal/pipe"
 	"os"
 )
 
 // On linux, we can limit or observe memory usage in command stages.
-var _ pipe.LimitableStage = (*commandStage)(nil)
+var _ LimitableStage = (*commandStage)(nil)
 
 var (
 	errProcessInfoMissing = errors.New("cmd.Process is nil")
@@ -32,7 +31,7 @@ func (s *commandStage) GetRSS(ctx context.Context) (uint64, error) {
 	scan := bufio.NewScanner(f)
 	for scan.Scan() {
 		line := scan.Text()
-		if rss, ok := pipe.parseRSS(line); ok {
+		if rss, ok := parseRSS(line); ok {
 			return rss, nil
 		}
 	}

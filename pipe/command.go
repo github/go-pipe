@@ -25,7 +25,7 @@ type commandStage struct {
 	wg     errgroup.Group
 	stderr bytes.Buffer
 
-	// If the context expired and we attempted to kill the command,
+	// If the context expired, and we attempted to kill the command,
 	// `ctx.Err()` is stored here.
 	ctxErr atomic.Value
 }
@@ -43,7 +43,7 @@ func Command(command string, args ...string) Stage {
 	return CommandStage(command, cmd)
 }
 
-// Command returns a pipeline `Stage` with the name `name`, based on
+// CommandStage returns a pipeline `Stage` with the name `name`, based on
 // the specified `cmd`. Its stdin and stdout are handled as usual, and
 // its stderr is collected and included in any `*exec.ExitError` that
 // the command might emit.
@@ -113,13 +113,62 @@ func (s *commandStage) Start(
 	go func() {
 		select {
 		case <-ctx.Done():
-			s.kill(ctx.Err())
+			s.Kill(ctx.Err())
 		case <-s.done:
 			// Process already done; no need to kill anything.
 		}
 	}()
 
 	return stdout, nil
+}
+
+// setupEnv sets or modifies the environment that will be passed to
+// the command.
+func (s *commandStage) setupEnv(ctx context.Context, env Env) {
+	if len(env.Vars) == 0 {
+		return
+	}
+
+	if s.cmd.Env == nil {
+		// If the caller didn't explicitly set an environment on
+		// `cmd`, then start with the current environment, and add a
+		// few environment variables that are meaningful to gitmon:
+		s.cmd.Env = os.Environ()
+	}
+
+	var vars []EnvVar
+	for _, fn := range env.Vars {
+		vars = fn(ctx, vars)
+	}
+	varMap := make(map[string]string, len(vars))
+	for _, v := range vars {
+		varMap[v.Key] = v.Value
+	}
+
+	s.cmd.Env = copyEnvWithOverrides(s.cmd.Env, varMap)
+}
+
+func copyEnvWithOverrides(myEnv []string, overrides map[string]string) []string {
+	vars := make([]string, 0, len(myEnv)+len(overrides))
+
+	for _, v := range myEnv {
+		eq := strings.Index(v, "=")
+		if eq == -1 {
+			vars = append(vars, v)
+			continue
+		}
+		key := v[:eq]
+		if _, ok := overrides[key]; ok {
+			continue
+		}
+		vars = append(vars, v)
+	}
+
+	for key, value := range overrides {
+		vars = append(vars, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	return vars
 }
 
 // filterCmdError interprets `err`, which was returned by `Cmd.Wait()`
@@ -176,53 +225,4 @@ func (s *commandStage) Wait() error {
 	}
 
 	return err
-}
-
-// setupEnv sets or modifies the environment that will be passed to
-// the command.
-func (s *commandStage) setupEnv(ctx context.Context, env Env) {
-	if len(env.Vars) == 0 {
-		return
-	}
-
-	if s.cmd.Env == nil {
-		// If the caller didn't explicitly set an environment on
-		// `cmd`, then start with the current environment, and add a
-		// few environment variables that are meaningful to gitmon:
-		s.cmd.Env = os.Environ()
-	}
-
-	var vars []EnvVar
-	for _, fn := range env.Vars {
-		vars = fn(ctx, vars)
-	}
-	varMap := make(map[string]string, len(vars))
-	for _, v := range vars {
-		varMap[v.Key] = v.Value
-	}
-
-	s.cmd.Env = copyEnvWithOverrides(s.cmd.Env, varMap)
-}
-
-func copyEnvWithOverrides(myEnv []string, overrides map[string]string) []string {
-	vars := make([]string, 0, len(myEnv)+len(overrides))
-
-	for _, v := range myEnv {
-		eq := strings.Index(v, "=")
-		if eq == -1 {
-			vars = append(vars, v)
-			continue
-		}
-		key := v[:eq]
-		if _, ok := overrides[key]; ok {
-			continue
-		}
-		vars = append(vars, v)
-	}
-
-	for key, value := range overrides {
-		vars = append(vars, fmt.Sprintf("%s=%s", key, value))
-	}
-
-	return vars
 }
