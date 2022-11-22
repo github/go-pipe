@@ -35,8 +35,7 @@ var FinishEarly = errors.New("finish stage early")
 type AppendVars func(context.Context, []EnvVar) []EnvVar
 
 // EnvVar represents an environment variable that will be provided to any child
-// process spawned in this pipeline. Only one of ValueFunc or Value should be
-// provided.
+// process spawned in this pipeline.
 type EnvVar struct {
 	// The name of the environment variable.
 	Key string
