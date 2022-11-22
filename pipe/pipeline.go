@@ -40,7 +40,7 @@ type AppendVars func(context.Context, []EnvVar) []EnvVar
 type EnvVar struct {
 	// The name of the environment variable.
 	Key string
-	// The value, if static.
+	// The value.
 	Value string
 }
 
