@@ -72,7 +72,7 @@ func (w nopWriteCloser) Close() error {
 	return nil
 }
 
-type NewPipeFn func(dir string, opts ...Option) *Pipeline
+type NewPipeFn func(opts ...Option) *Pipeline
 
 // NewPipeline returns a Pipeline struct with all of the `options`
 // applied.
