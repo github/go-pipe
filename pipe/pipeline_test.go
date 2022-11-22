@@ -911,11 +911,6 @@ func BenchmarkTenMixedStages(b *testing.B) {
 	}
 }
 
-func catFn(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
-	_, err := io.Copy(stdout, stdin)
-	return err
-}
-
 func genErr(err error) pipe.StageFunc {
 	return func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
 		return err

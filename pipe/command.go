@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync/atomic"
 	"syscall"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // commandStage is a pipeline `Stage` based on running an external
