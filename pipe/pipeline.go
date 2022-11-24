@@ -62,7 +62,11 @@ type Pipeline struct {
 	// been started. This is only used for lifecycle sanity checks but
 	// does not guarantee that clients are using the class correctly.
 	started uint32
+
+	eventHandler func(e *Event)
 }
+
+var emptyEventHandler = func(e *Event) {}
 
 type nopWriteCloser struct {
 	io.Writer
@@ -72,12 +76,14 @@ func (w nopWriteCloser) Close() error {
 	return nil
 }
 
-type NewPipeFn func(dir string, opts ...Option) *Pipeline
+type NewPipeFn func(opts ...Option) *Pipeline
 
 // NewPipeline returns a Pipeline struct with all of the `options`
 // applied.
 func New(options ...Option) *Pipeline {
-	p := &Pipeline{}
+	p := &Pipeline{
+		eventHandler: emptyEventHandler,
+	}
 
 	for _, option := range options {
 		option(p)
@@ -157,6 +163,21 @@ func WithEnvVarsFunc(valuesFunc ContextValuesFunc) Option {
 	}
 }
 
+// Event represents anything that could happen during the pipeline execution
+type Event struct {
+	Command string
+	Msg     string
+	Err     error
+}
+
+// WithEventHandler sets a handler for the pipeline. Setting one will emit
+// and event for each process.
+func WithEventHandler(handler func(e *Event)) Option {
+	return func(p *Pipeline) {
+		p.eventHandler = handler
+	}
+}
+
 func (p *Pipeline) hasStarted() bool {
 	return atomic.LoadUint32(&p.started) != 0
 }
@@ -217,6 +238,11 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			for _, s := range p.stages[:i] {
 				_ = s.Wait()
 			}
+			p.eventHandler(&Event{
+				Command: s.Name(),
+				Msg:     "failed to start pipeline stage",
+				Err:     err,
+			})
 			return fmt.Errorf("starting pipeline stage %q: %w", s.Name(), err)
 		}
 		nextStdin = stdout
@@ -320,6 +346,11 @@ func (p *Pipeline) Wait() error {
 	}
 
 	if earliestStageErr != nil {
+		p.eventHandler(&Event{
+			Command: earliestFailedStage.Name(),
+			Msg:     "command failed",
+			Err:     earliestStageErr,
+		})
 		return fmt.Errorf("%s: %w", earliestFailedStage.Name(), earliestStageErr)
 	}
 

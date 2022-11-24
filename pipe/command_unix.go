@@ -20,7 +20,7 @@ func (s *commandStage) runInOwnProcessGroup() {
 
 // kill is called to kill the process if the context expires. `err` is
 // the corresponding value of `Context.Err()`.
-func (s *commandStage) kill(err error) {
+func (s *commandStage) Kill(err error) {
 	// I believe that the calls to `syscall.Kill()` in this method are
 	// racy. It could be that s.cmd.Wait() succeeds immediately before
 	// this call, in which case the process group wouldn't exist
