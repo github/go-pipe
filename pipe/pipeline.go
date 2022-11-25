@@ -168,6 +168,7 @@ type Event struct {
 	Command string
 	Msg     string
 	Err     error
+	Context map[string]interface{}
 }
 
 // WithEventHandler sets a handler for the pipeline. Setting one will emit
