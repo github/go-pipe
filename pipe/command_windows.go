@@ -8,7 +8,7 @@ func (s *commandStage) runInOwnProcessGroup() {}
 
 // kill is called to kill the process if the context expires. `err` is
 // the corresponding value of `Context.Err()`.
-func (s *commandStage) kill(err error) {
+func (s *commandStage) Kill(err error) {
 	select {
 	case <-s.done:
 		// Process has ended; no need to kill it again.
