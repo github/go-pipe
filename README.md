@@ -1,4 +1,4 @@
-# go-pipe [![GoDoc](https://pkg.go.dev/github.com/github/go-pipe)
+# go-pipe [![GoDoc](https://pkg.go.dev/badge/github.com/github/docs)](https://pkg.go.dev/github.com/github/go-pipe)
 A package used to easily build command pipelines in your Go applications
 
 # Important
