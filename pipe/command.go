@@ -69,7 +69,16 @@ func (s *commandStage) Start(
 	s.setupEnv(ctx, env)
 
 	if stdin != nil {
-		s.cmd.Stdin = stdin
+		// See the long comment in `Pipeline.Start()` for the
+		// explanation of this special case.
+		switch stdin := stdin.(type) {
+		case nopCloser:
+			s.cmd.Stdin = stdin.Reader
+		case nopCloserWriterTo:
+			s.cmd.Stdin = stdin.Reader
+		default:
+			s.cmd.Stdin = stdin
+		}
 		// Also keep a copy so that we can close it when the command exits:
 		s.stdin = stdin
 	}
