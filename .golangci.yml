@@ -30,6 +30,18 @@ linters:
       - lll              # we allow any line length
       - unparam          # we allow function calls to name unused parameters
       - maligned         # clear structs are more important than saving a few bytes.
+
+linters-settings:
+  depguard:
+    rules:
+      main:
+        files:
+          - "$all"
+          - "!$test"
+        deny:
+          - pkg: io/ioutil
+            desc: The io/ioutil package has been deprecated, see https://go.dev/doc/go1.16#ioutil
+
 run:
   timeout: 5m
   skip-dirs:
