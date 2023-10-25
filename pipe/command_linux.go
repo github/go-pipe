@@ -16,7 +16,7 @@ var (
 	errProcessInfoMissing = errors.New("cmd.Process is nil")
 )
 
-func (s *commandStage) GetRSSAnon(ctx context.Context) (uint64, error) {
+func (s *commandStage) GetRSSAnon(_ context.Context) (uint64, error) {
 	if s.cmd.Process == nil {
 		return 0, errProcessInfoMissing
 	}

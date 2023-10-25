@@ -27,7 +27,7 @@ func (s *ioCopier) Name() string {
 }
 
 // This method always returns `nil, nil`.
-func (s *ioCopier) Start(ctx context.Context, _ Env, r io.ReadCloser) (io.ReadCloser, error) {
+func (s *ioCopier) Start(_ context.Context, _ Env, r io.ReadCloser) (io.ReadCloser, error) {
 	go func() {
 		_, err := io.Copy(s.w, r)
 		// We don't consider `ErrClosed` an error (FIXME: is this
