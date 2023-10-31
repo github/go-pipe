@@ -432,7 +432,7 @@ func (s ErrorStartingStage) Name() string {
 }
 
 func (s ErrorStartingStage) Start(
-	ctx context.Context, env pipe.Env, stdin io.ReadCloser,
+	_ context.Context, _ pipe.Env, _ io.ReadCloser,
 ) (io.ReadCloser, error) {
 	return io.NopCloser(&bytes.Buffer{}), s.err
 }
@@ -854,7 +854,7 @@ func BenchmarkTenFunctions(b *testing.B) {
 
 	dir := b.TempDir()
 
-	copy := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
 		_, err := io.Copy(stdout, stdin)
 		return err
 	}
@@ -863,15 +863,15 @@ func BenchmarkTenFunctions(b *testing.B) {
 		p := pipe.New(pipe.WithDir(dir))
 		p.Add(
 			pipe.Println("hello world"),
-			pipe.Function("copy1", copy),
-			pipe.Function("copy2", copy),
-			pipe.Function("copy3", copy),
-			pipe.Function("copy4", copy),
-			pipe.Function("copy5", copy),
-			pipe.Function("copy6", copy),
-			pipe.Function("copy7", copy),
-			pipe.Function("copy8", copy),
-			pipe.Function("copy9", copy),
+			pipe.Function("copy1", cp),
+			pipe.Function("copy2", cp),
+			pipe.Function("copy3", cp),
+			pipe.Function("copy4", cp),
+			pipe.Function("copy5", cp),
+			pipe.Function("copy6", cp),
+			pipe.Function("copy7", cp),
+			pipe.Function("copy8", cp),
+			pipe.Function("copy9", cp),
 		)
 		out, err := p.Output(ctx)
 		if assert.NoError(b, err) {
@@ -885,7 +885,7 @@ func BenchmarkTenMixedStages(b *testing.B) {
 
 	dir := b.TempDir()
 
-	copy := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
 		_, err := io.Copy(stdout, stdin)
 		return err
 	}
@@ -894,15 +894,15 @@ func BenchmarkTenMixedStages(b *testing.B) {
 		p := pipe.New(pipe.WithDir(dir))
 		p.Add(
 			pipe.Command("echo", "hello world"),
-			pipe.Function("copy1", copy),
+			pipe.Function("copy1", cp),
 			pipe.Command("cat"),
-			pipe.Function("copy2", copy),
+			pipe.Function("copy2", cp),
 			pipe.Command("cat"),
-			pipe.Function("copy3", copy),
+			pipe.Function("copy3", cp),
 			pipe.Command("cat"),
-			pipe.Function("copy4", copy),
+			pipe.Function("copy4", cp),
 			pipe.Command("cat"),
-			pipe.Function("copy5", copy),
+			pipe.Function("copy5", cp),
 		)
 		out, err := p.Output(ctx)
 		if assert.NoError(b, err) {
