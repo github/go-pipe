@@ -87,6 +87,74 @@ func TestPipelineSingleCommandWithStdout(t *testing.T) {
 	}
 }
 
+func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
+	t.Parallel()
+
+	// Make sure that the subprocess terminates on its own, as opposed
+	// to getting stuck waiting for stdin to close, even though the
+	// subprocess doesn't read from its stdin.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = w.Close()
+		_ = r.Close()
+	})
+
+	var stdout bytes.Buffer
+
+	p := pipe.New(pipe.WithStdin(r), pipe.WithStdout(&stdout))
+	// Note that this command doesn't read from its stdin, so it will
+	// terminate regardless of whether `w` gets closed:
+	p.Add(pipe.Command("true"))
+
+	// An error here presumably means that the context has timed out,
+	// which shouldn't happen.
+	assert.NoError(t, p.Run(ctx))
+}
+
+func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
+	t.Skip("test not run because it currently deadlocks")
+
+	t.Parallel()
+
+	// Ideally, we'd want the subprocess to terminate on its own, as
+	// opposed to getting stuck waiting for stdin to close, because
+	// the subprocess doesn't read from its stdin.
+	//
+	// A second-best outcome would be that the program is killed
+	// cleanly by the context timeout, and the pipeline ends promptly.
+	//
+	// What actually happens is a deadlock :-(
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = w.Close()
+		_ = r.Close()
+	})
+
+	var stdout bytes.Buffer
+
+	// The point here is to wrap `r` so that `exec.Cmd` doesn't
+	// recognize that it's an `*os.File`:
+	p := pipe.New(
+		pipe.WithStdin(io.NopCloser(r)),
+		pipe.WithStdout(&stdout),
+	)
+	// Note that this command doesn't read from its stdin, so it will
+	// terminate regardless of whether `w` gets closed:
+	p.Add(pipe.Command("true"))
+
+	// An error here presumably means that the context has timed out,
+	// which shouldn't happen.
+	assert.NoError(t, p.Run(ctx))
+}
+
 func TestNontrivialPipeline(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

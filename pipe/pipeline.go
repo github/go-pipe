@@ -218,8 +218,50 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	var nextStdin io.ReadCloser
 	if p.stdin != nil {
 		// We don't want the first stage to actually close this, and
-		// it's not even an `io.ReadCloser`, so fake it:
-		nextStdin = io.NopCloser(p.stdin)
+		// `p.stdin` is not even necessarily an `io.ReadCloser`. So
+		// wrap it in a fake `io.ReadCloser` whose `Close()` method
+		// doesn't do anything.
+		//
+		// We could use `io.NopCloser()` for this purpose, but it has
+		// a subtle problem. If the first stage is a `Command`, then
+		// it wants to set the `exec.Cmd`'s `Stdin` to an `io.Reader`
+		// corresponding to `p.stdin`. If `Cmd.Stdin` is an
+		// `*os.File`, then the file descriptor can be passed to the
+		// subcommand directly; there is no need for this process to
+		// create a pipe and copy the data into the input side of the
+		// pipe. But if `p.stdin` is not an `*os.File`, then this
+		// optimization is prevented. And even worse, it also has the
+		// side effect that the goroutine that copies from `Cmd.Stdin`
+		// into the pipe doesn't terminate until that fd is closed by
+		// the writing side.
+		//
+		// That isn't always what we want. Consider, for example, the
+		// following snippet, where the subcommand's stdin is set to
+		// the stdin of the enclosing Go program, but wrapped with
+		// `io.NopCloser`:
+		//
+		//     cmd := exec.Command("ls")
+		//     cmd.Stdin = io.NopCloser(os.Stdin)
+		//     cmd.Stdout = os.Stdout
+		//     cmd.Stderr = os.Stderr
+		//     cmd.Run()
+		//
+		// In this case, we don't want the Go program to wait for
+		// `os.Stdin` to close (because `ls` isn't even trying to read
+		// from its stdin). But it does: `exec.Cmd` doesn't recognize
+		// that `Cmd.Stdin` is an `*os.File`, so it sets up a pipe and
+		// copies the data itself, and this goroutine doesn't
+		// terminate until `cmd.Stdin` (i.e., the Go program's own
+		// stdin) is closed. But if, for example, the Go program is
+		// run from an interactive shell session, that might never
+		// happen, in which case the program will fail to terminate,
+		// even after `ls` exits.
+		//
+		// So instead, in this special case, we wrap `p.stdin` in our
+		// own `nopCloser`, which behaves like `io.NopCloser`, except
+		// that `pipe.CommandStage` knows how to unwrap it before
+		// passing it to `exec.Cmd`.
+		nextStdin = newNopCloser(p.stdin)
 	}
 
 	for i, s := range p.stages {
