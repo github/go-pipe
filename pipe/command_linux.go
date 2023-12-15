@@ -10,7 +10,7 @@ import (
 )
 
 // On linux, we can limit or observe memory usage in command stages.
-var _ LimitableStage = (*commandStage)(nil)
+var _ LimitableStage2 = (*commandStage)(nil)
 
 var (
 	errProcessInfoMissing = errors.New("cmd.Process is nil")
