@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -112,165 +113,36 @@ func TestMemoryLimitTreeMem(t *testing.T) {
 	require.ErrorContains(t, err, "memory limit exceeded")
 }
 
-type closeWrapper struct {
-	io.Writer
-	close func() error
-}
-
-func (w closeWrapper) Close() error {
-	return w.close()
-}
-
-func TestMemoryLimitWithObserverSimple(t *testing.T) {
-	t.Parallel()
-	msg, err := testMemoryLimitWithObserver(t, 400, 10_000_000, pipe.Command("less"))
-	assert.Contains(t, msg, "exceeded allowed memory")
-	assert.Contains(t, msg, "limit=10000000")
-	require.ErrorContains(t, err, "memory limit exceeded")
-}
-
-func TestMemoryLimitWithObserverTreeMem(t *testing.T) {
-	t.Parallel()
-	msg, err := testMemoryLimitWithObserver(t, 400, 10_000_000, pipe.Command("sh", "-c", "less; :"))
-	assert.Contains(t, msg, "exceeded allowed memory")
-	assert.Contains(t, msg, "limit=10000000")
-	require.ErrorContains(t, err, "memory limit exceeded")
-}
-
-func TestMemoryLimitWithObserverBelowLimit(t *testing.T) {
-	t.Parallel()
-	rss := testMemoryLimitWithObserverBelowLimit(t, 400, pipe.Command("less"))
-	require.Greater(t, rss, 400_000_000)
-}
-
-func TestMemoryLimitWithObserverBelowLimitTreeMem(t *testing.T) {
-	t.Parallel()
-	rss := testMemoryLimitWithObserverBelowLimit(t, 400, pipe.Command("sh", "-c", "less; :"))
-	require.Greater(t, rss, 400_000_000)
-}
-
-func TestMemoryLimitWithObserverLogsPeakOnKill(t *testing.T) {
-	t.Parallel()
-	msg, err := testMemoryLimitWithObserver(t, 400, 10_000_000, pipe.Command("less"))
-	// Verify both limit-exceeded AND peak memory are logged (matching
-	// the behavior of MemoryLimit(MemoryObserver(...)))
-	assert.Contains(t, msg, "exceeded allowed memory")
-	assert.Contains(t, msg, "peak memory usage")
-	require.ErrorContains(t, err, "memory limit exceeded")
-}
-
-func testMemoryLimitWithObserverBelowLimit(t *testing.T, mbs int, stage pipe.Stage) int {
-	ctx := context.Background()
-
-	stdinReader, stdinWriter := io.Pipe()
-
-	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
-	require.NoError(t, err)
-
-	buf := &bytes.Buffer{}
-	logger := log.New(buf, "testMemoryLimitWithObserver", log.Ldate|log.Ltime)
-
-	// Use a high limit so it won't be hit — we want to verify the observer part
-	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdout(devNull))
-	p.Add(pipe.MemoryLimitWithObserver(stage, 100*1024*1024*1024, LogEventHandler(logger)))
-	require.NoError(t, p.Start(ctx))
-
-	var bytes [1_000_000]byte
-	for i := 0; i < mbs; i++ {
-		n, err := stdinWriter.Write(bytes[:])
-		require.NoError(t, err)
-		require.Equal(t, len(bytes), n)
-	}
-
-	time.Sleep(2 * time.Second)
-
-	require.NoError(t, stdinWriter.Close())
-	require.NoError(t, p.Wait())
-
-	// Verify that peak memory usage was logged (the observer part)
-	output := buf.String()
-	assert.Contains(t, output, "peak memory usage")
-
-	return maxBytes(output)
-}
-
-func testMemoryLimitWithObserver(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (string, error) {
-	ctx := context.Background()
-
-	stdinReader, stdinWriter := io.Pipe()
-
-	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
-	require.NoError(t, err)
-
-	closedErr := fmt.Errorf("stdout was closed")
-	stdout := closeWrapper{
-		Writer: devNull,
-		close: func() error {
-			require.NoError(t, stdinReader.CloseWithError(closedErr))
-			return nil
-		},
-	}
-
-	buf := &bytes.Buffer{}
-	logger := log.New(buf, "testMemoryLimitWithObserver", log.Ldate|log.Ltime)
-
-	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdoutCloser(stdout))
-	p.Add(pipe.MemoryLimitWithObserver(stage, limit, LogEventHandler(logger)))
-	require.NoError(t, p.Start(ctx))
-
-	var bytes [1_000_000]byte
-	for i := 0; i < mbs; i++ {
-		_, err := stdinWriter.Write(bytes[:])
-		if err != nil {
-			require.ErrorIs(t, err, closedErr)
-		}
-	}
-
-	require.NoError(t, stdinWriter.Close())
-	err = p.Wait()
-
-	return buf.String(), err
-}
-
 func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (string, error) {
 	ctx := context.Background()
 
-	stdinReader, stdinWriter := io.Pipe()
-
 	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
 	require.NoError(t, err)
-
-	// io.Pipe doesn't know if anything is listening on the other end, so once
-	// our process is expectedly killed then we'll end up blocked trying to
-	// write to it. To workaround this, make sure we close the pipe reader when
-	// we've detected that the process has exited (i.e. when stdout has been
-	// closed). This will cause our write to immediately fail with this error.
-	closedErr := fmt.Errorf("stdout was closed")
-	stdout := closeWrapper{
-		Writer: devNull,
-		close: func() error {
-			require.NoError(t, stdinReader.CloseWithError(closedErr))
-			return nil
-		},
-	}
 
 	buf := &bytes.Buffer{}
 	logger := log.New(buf, "testMemoryObserver", log.Ldate|log.Ltime)
 
-	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdoutCloser(stdout))
-	p.Add(pipe.MemoryLimit(stage, limit, LogEventHandler(logger)))
+	p := pipe.New(pipe.WithDir("/"), pipe.WithStdoutCloser(devNull))
+	p.Add(
+		pipe.Function(
+			"write-to-less",
+			func(ctx context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+				// Write some nonsense data to less.
+				var bytes [1_000_000]byte
+				for i := 0; i < mbs; i++ {
+					_, err := stdout.Write(bytes[:])
+					if err != nil {
+						require.ErrorIs(t, err, syscall.EPIPE)
+					}
+				}
+
+				return nil
+			},
+		),
+		pipe.MemoryLimit(stage, limit, LogEventHandler(logger)),
+	)
 	require.NoError(t, p.Start(ctx))
 
-	// Write some nonsense data to less.
-	var bytes [1_000_000]byte
-	for i := 0; i < mbs; i++ {
-		_, err := stdinWriter.Write(bytes[:])
-		if err != nil {
-			require.ErrorIs(t, err, closedErr)
-		}
-	}
-
-	require.NoError(t, stdinWriter.Close())
 	err = p.Wait()
 
 	return buf.String(), err

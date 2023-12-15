@@ -75,7 +75,7 @@ func TestPipelineSingleCommandWithStdout(t *testing.T) {
 	}
 }
 
-func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
+func TestPipelineStdinOSPipeThatIsNeverClosed(t *testing.T) {
 	t.Parallel()
 
 	// Make sure that the subprocess terminates on its own, as opposed
@@ -93,7 +93,10 @@ func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
 
 	var stdout bytes.Buffer
 
-	p := pipe.New(pipe.WithStdin(r), pipe.WithStdout(&stdout))
+	p := pipe.New(
+		pipe.WithStdin(r),
+		pipe.WithStdout(&stdout),
+	)
 	// Note that this command doesn't read from its stdin, so it will
 	// terminate regardless of whether `w` gets closed:
 	p.Add(pipe.Command("true"))
@@ -103,7 +106,7 @@ func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
 	assert.NoError(t, p.Run(ctx))
 }
 
-func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
+func TestPipelineIOPipeStdinThatIsNeverClosed(t *testing.T) {
 	t.Skip("test not run because it currently deadlocks")
 
 	t.Parallel()
@@ -157,7 +160,33 @@ func TestNontrivialPipeline(t *testing.T) {
 	}
 }
 
-func TestPipelineReadFromSlowly(t *testing.T) {
+func TestOSPipePipelineReadFromSlowly(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	var buf []byte
+	readErr := make(chan error, 1)
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		var err error
+		buf, err = io.ReadAll(r)
+		readErr <- err
+	}()
+
+	p := pipe.New(pipe.WithStdoutCloser(w))
+	p.Add(pipe.Command("echo", "hello world"))
+	assert.NoError(t, p.Run(ctx))
+
+	assert.NoError(t, <-readErr)
+	assert.Equal(t, "hello world\n", string(buf))
+}
+
+func TestIOPipePipelineReadFromSlowly(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -428,28 +457,6 @@ func TestFunction(t *testing.T) {
 		assert.NoError(t, err)
 		assert.EqualValues(t, "goodbye, cruel world", out)
 	})
-
-	t.Run("panic with handler", func(t *testing.T) {
-		p := pipe.New(
-			pipe.WithStagePanicHandler(func(p any) error {
-				err := fmt.Errorf("panic handled: %v", p)
-				return err
-			}),
-		)
-		p.Add(
-			pipe.Print("hello world"),
-			pipe.Function(
-				"farewell",
-				func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
-					panic("this is a panic")
-				},
-			),
-		)
-
-		out, err := p.Output(ctx)
-		assert.ErrorContains(t, err, "panic handled")
-		assert.Empty(t, out)
-	})
 }
 
 func TestPipelineWithFunction(t *testing.T) {
@@ -488,10 +495,23 @@ func (s ErrorStartingStage) Name() string {
 	return "errorStartingStage"
 }
 
+func (s ErrorStartingStage) Preferences() pipe.StagePreferences {
+	return pipe.StagePreferences{
+		StdinPreference:  pipe.IOPreferenceUndefined,
+		StdoutPreference: pipe.IOPreferenceUndefined,
+	}
+}
+
 func (s ErrorStartingStage) Start(
-	_ context.Context, _ pipe.Env, _ io.ReadCloser,
-) (io.ReadCloser, error) {
-	return io.NopCloser(&bytes.Buffer{}), s.err
+	_ context.Context, _ pipe.Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if stdout != nil {
+		_ = stdout.Close()
+	}
+	return s.err
 }
 
 func (s ErrorStartingStage) Wait() error {

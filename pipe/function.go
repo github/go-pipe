@@ -9,7 +9,7 @@ import (
 // StageFunc is a function that can be used to power a `goStage`. It
 // should read its input from `stdin` and write its output to
 // `stdout`. `stdin` and `stdout` will be closed automatically (if
-// necessary) once the function returns.
+// non-nil) once the function returns.
 //
 // Neither `stdin` nor `stdout` are necessarily buffered. If the
 // `StageFunc` requires buffering, it needs to arrange that itself.
@@ -32,57 +32,62 @@ func Function(name string, f StageFunc) Stage {
 // goStage is a `Stage` that does its work by running an arbitrary
 // `stageFunc` in a goroutine.
 type goStage struct {
-	name         string
-	f            StageFunc
-	done         chan struct{}
-	err          error
-	panicHandler StagePanicHandler
+	name string
+	f    StageFunc
+	done chan struct{}
+	err  error
 }
+
+var (
+	_ Stage = (*goStage)(nil)
+)
 
 func (s *goStage) Name() string {
 	return s.name
 }
 
-func (s *goStage) SetPanicHandler(ph StagePanicHandler) {
-	s.panicHandler = ph
+func (s *goStage) Preferences() StagePreferences {
+	return StagePreferences{
+		StdinPreference:  IOPreferenceUndefined,
+		StdoutPreference: IOPreferenceUndefined,
+	}
 }
 
-func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.ReadCloser, error) {
-	r, w := io.Pipe()
+func (s *goStage) Start(
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
+	var r io.Reader = stdin
+	if stdin, ok := stdin.(readerNopCloser); ok {
+		r = stdin.Reader
+	}
+
+	var w io.Writer = stdout
+	if stdout, ok := stdout.(writerNopCloser); ok {
+		w = stdout.Writer
+	}
 
 	go func() {
-		defer func() {
-			// Cleanup resources on exit
-			if err := w.Close(); err != nil && s.err == nil {
-				s.err = fmt.Errorf("error closing output pipe for stage %q: %w", s.Name(), err)
-			}
-			if stdin != nil {
-				if err := stdin.Close(); err != nil && s.err == nil {
-					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
-				}
-			}
-			close(s.done)
-		}()
+		s.err = s.f(ctx, env, r, w)
 
-		defer s.recoverPanic()
+		if stdout != nil {
+			if err := stdout.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
+			}
+		}
 
-		s.err = s.f(ctx, env, stdin, w)
+		if stdin != nil {
+			if err := stdin.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
+			}
+		}
+
+		close(s.done)
 	}()
 
-	return r, nil
+	return nil
 }
 
 func (s *goStage) Wait() error {
 	<-s.done
 	return s.err
-}
-
-func (s *goStage) recoverPanic() {
-	if s.panicHandler == nil {
-		return
-	}
-
-	if p := recover(); p != nil {
-		s.err = s.panicHandler(p)
-	}
 }
