@@ -6,29 +6,48 @@ package pipe
 
 import "io"
 
-// newNopCloser returns a ReadCloser with a no-op Close method wrapping
-// the provided io.Reader r.
-// If r implements io.WriterTo, the returned io.ReadCloser will implement io.WriterTo
-// by forwarding calls to r.
-func newNopCloser(r io.Reader) io.ReadCloser {
+// newReaderNopCloser returns a ReadCloser with a no-op Close method,
+// wrapping the provided io.Reader `r`. If `r` implements
+// `io.WriterTo`, the returned `io.ReadCloser` will also implement
+// `io.WriterTo` by forwarding calls to `r`.
+func newReaderNopCloser(r io.Reader) io.ReadCloser {
 	if _, ok := r.(io.WriterTo); ok {
-		return nopCloserWriterTo{r}
+		return readerWriterToNopCloser{r}
 	}
-	return nopCloser{r}
+	return readerNopCloser{r}
 }
 
-type nopCloser struct {
+// readerNopCloser is a ReadCloser that wraps a provided `io.Reader`,
+// but whose `Close()` method does nothing. We don't need to check
+// whether the wrapped reader also implements `io.WriterTo`, since
+// it's always unwrapped before use.
+type readerNopCloser struct {
 	io.Reader
 }
 
-func (nopCloser) Close() error { return nil }
+func (readerNopCloser) Close() error {
+	return nil
+}
 
-type nopCloserWriterTo struct {
+// readerWriterToNopCloser is like `readerNopCloser` except that it
+// also implements `io.WriterTo` by delegating `WriteTo()` to the
+// wrapped `io.Reader` (which must also implement `io.WriterTo`).
+type readerWriterToNopCloser struct {
 	io.Reader
 }
 
-func (nopCloserWriterTo) Close() error { return nil }
+func (readerWriterToNopCloser) Close() error { return nil }
 
-func (c nopCloserWriterTo) WriteTo(w io.Writer) (n int64, err error) {
-	return c.Reader.(io.WriterTo).WriteTo(w)
+func (r readerWriterToNopCloser) WriteTo(w io.Writer) (n int64, err error) {
+	return r.Reader.(io.WriterTo).WriteTo(w)
+}
+
+// writerNopCloser is a WriteCloser that wraps a provided `io.Writer`,
+// but whose `Close()` method does nothing.
+type writerNopCloser struct {
+	io.Writer
+}
+
+func (w writerNopCloser) Close() error {
+	return nil
 }

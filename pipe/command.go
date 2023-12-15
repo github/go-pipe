@@ -72,9 +72,9 @@ func (s *commandStage) Start(
 		// See the long comment in `Pipeline.Start()` for the
 		// explanation of this special case.
 		switch stdin := stdin.(type) {
-		case nopCloser:
+		case readerNopCloser:
 			s.cmd.Stdin = stdin.Reader
-		case nopCloserWriterTo:
+		case readerWriterToNopCloser:
 			s.cmd.Stdin = stdin.Reader
 		default:
 			s.cmd.Stdin = stdin

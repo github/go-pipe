@@ -68,14 +68,6 @@ type Pipeline struct {
 
 var emptyEventHandler = func(e *Event) {}
 
-type nopWriteCloser struct {
-	io.Writer
-}
-
-func (w nopWriteCloser) Close() error {
-	return nil
-}
-
 type NewPipeFn func(opts ...Option) *Pipeline
 
 // NewPipeline returns a Pipeline struct with all of the `options`
@@ -112,7 +104,7 @@ func WithStdin(stdin io.Reader) Option {
 // WithStdout assigns stdout to the last command in the pipeline.
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
-		p.stdout = nopWriteCloser{stdout}
+		p.stdout = writerNopCloser{stdout}
 	}
 }
 
@@ -261,7 +253,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// own `nopCloser`, which behaves like `io.NopCloser`, except
 		// that `pipe.CommandStage` knows how to unwrap it before
 		// passing it to `exec.Cmd`.
-		nextStdin = newNopCloser(p.stdin)
+		nextStdin = newReaderNopCloser(p.stdin)
 	}
 
 	for i, s := range p.stages {
@@ -305,7 +297,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
 	var buf bytes.Buffer
-	p.stdout = nopWriteCloser{&buf}
+	p.stdout = writerNopCloser{&buf}
 	err := p.Run(ctx)
 	return buf.Bytes(), err
 }
