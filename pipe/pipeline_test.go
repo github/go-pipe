@@ -184,14 +184,9 @@ func TestPipelineReadFromSlowly(t *testing.T) {
 		readErr <- err
 	}()
 
-	p := pipe.New(pipe.WithStdout(w))
+	p := pipe.New(pipe.WithStdoutCloser(w))
 	p.Add(pipe.Command("echo", "hello world"))
 	assert.NoError(t, p.Run(ctx))
-
-	time.Sleep(100 * time.Millisecond)
-	// It's not super-intuitive, but `w` has to be closed here so that
-	// the `io.ReadAll()` call above knows that it's done:
-	_ = w.Close()
 
 	assert.NoError(t, <-readErr)
 	assert.Equal(t, "hello world\n", string(buf))
@@ -229,14 +224,9 @@ func TestPipelineReadFromSlowly2(t *testing.T) {
 		}
 	}()
 
-	p := pipe.New(pipe.WithStdout(w))
+	p := pipe.New(pipe.WithStdoutCloser(w))
 	p.Add(pipe.Command("seq", "100"))
 	assert.NoError(t, p.Run(ctx))
-
-	time.Sleep(200 * time.Millisecond)
-	// It's not super-intuitive, but `w` has to be closed here so that
-	// the `io.ReadAll()` call above knows that it's done:
-	_ = w.Close()
 
 	assert.NoError(t, <-readErr)
 	assert.Equal(t, 292, len(buf))
