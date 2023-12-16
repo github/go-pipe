@@ -159,9 +159,7 @@ func TestNontrivialPipeline(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("echo", "hello world"),
 		pipe.Command("sed", "s/hello/goodbye/"),
@@ -211,8 +209,6 @@ func TestPipelineReadFromSlowly2(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	dir := t.TempDir()
-
 	r, w := io.Pipe()
 
 	var buf []byte
@@ -236,7 +232,7 @@ func TestPipelineReadFromSlowly2(t *testing.T) {
 		}
 	}()
 
-	p := pipe.New(pipe.WithDir(dir), pipe.WithStdout(w))
+	p := pipe.New(pipe.WithStdout(w))
 	p.Add(pipe.Command("seq", "100"))
 	assert.NoError(t, p.Run(ctx))
 
@@ -253,9 +249,7 @@ func TestPipelineTwoCommandsPiping(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(pipe.Command("echo", "hello world"))
 	assert.Panics(t, func() { p.Add(pipe.Command("")) })
 	out, err := p.Output(ctx)
@@ -283,9 +277,7 @@ func TestPipelineExit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("false"),
 		pipe.Command("true"),
@@ -316,11 +308,10 @@ func TestPipelineInterrupted(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
 	stdout := &bytes.Buffer{}
 
-	p := pipe.New(pipe.WithDir(dir), pipe.WithStdout(stdout))
+	p := pipe.New(pipe.WithStdout(stdout))
 	p.Add(pipe.Command("sleep", "10"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -339,11 +330,10 @@ func TestPipelineCanceled(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
 	stdout := &bytes.Buffer{}
 
-	p := pipe.New(pipe.WithDir(dir), pipe.WithStdout(stdout))
+	p := pipe.New(pipe.WithStdout(stdout))
 	p.Add(pipe.Command("sleep", "10"))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -367,9 +357,8 @@ func TestLittleEPIPE(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("sh", "-c", "sleep 1; echo foo"),
 		pipe.Command("true"),
@@ -391,9 +380,8 @@ func TestBigEPIPE(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("seq", "100000"),
 		pipe.Command("true"),
@@ -415,9 +403,8 @@ func TestIgnoredSIGPIPE(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.IgnoreError(pipe.Command("seq", "100000"), pipe.IsSIGPIPE),
 		pipe.Command("echo", "foo"),
@@ -434,9 +421,7 @@ func TestFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Print("hello world"),
 		pipe.Function(
@@ -464,9 +449,7 @@ func TestPipelineWithFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("echo", "-n", "hello world"),
 		pipe.Function(
@@ -528,9 +511,7 @@ func TestPipelineWithLinewiseFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	// Print the numbers from 1 to 20 (generated from scratch):
 	p.Add(
 		seqFunction(20),
@@ -581,7 +562,7 @@ func TestScannerAlwaysFlushes(t *testing.T) {
 
 	var length int64
 
-	p := pipe.New(pipe.WithDir("."))
+	p := pipe.New()
 	// Print the numbers from 1 to 20 (generated from scratch):
 	p.Add(
 		pipe.IgnoreError(
@@ -629,7 +610,7 @@ func TestScannerFinishEarly(t *testing.T) {
 
 	var length int64
 
-	p := pipe.New(pipe.WithDir("."))
+	p := pipe.New()
 	// Print the numbers from 1 to 20 (generated from scratch):
 	p.Add(
 		pipe.IgnoreError(
@@ -670,9 +651,7 @@ func TestPrintln(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(pipe.Println("Look Ma, no hands!"))
 	out, err := p.Output(ctx)
 	if assert.NoError(t, err) {
@@ -684,9 +663,7 @@ func TestPrintf(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(pipe.Printf("Strangely recursive: %T", p))
 	out, err := p.Output(ctx)
 	if assert.NoError(t, err) {
@@ -880,10 +857,8 @@ func TestErrors(t *testing.T) {
 func BenchmarkSingleProgram(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Command("true"),
 		)
@@ -894,10 +869,8 @@ func BenchmarkSingleProgram(b *testing.B) {
 func BenchmarkTenPrograms(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Command("echo", "hello world"),
 			pipe.Command("cat"),
@@ -920,15 +893,13 @@ func BenchmarkTenPrograms(b *testing.B) {
 func BenchmarkTenFunctions(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
 		_, err := io.Copy(stdout, stdin)
 		return err
 	}
 
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Println("hello world"),
 			pipe.Function("copy1", cp),
@@ -951,15 +922,13 @@ func BenchmarkTenFunctions(b *testing.B) {
 func BenchmarkTenMixedStages(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
 		_, err := io.Copy(stdout, stdin)
 		return err
 	}
 
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Command("echo", "hello world"),
 			pipe.Function("copy1", cp),
