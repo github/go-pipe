@@ -131,8 +131,7 @@ func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
+	r, w := io.Pipe()
 	t.Cleanup(func() {
 		_ = w.Close()
 		_ = r.Close()
@@ -140,10 +139,8 @@ func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
 
 	var stdout bytes.Buffer
 
-	// The point here is to wrap `r` so that `exec.Cmd` doesn't
-	// recognize that it's an `*os.File`:
 	p := pipe.New(
-		pipe.WithStdin(io.NopCloser(r)),
+		pipe.WithStdin(r),
 		pipe.WithStdout(&stdout),
 	)
 	// Note that this command doesn't read from its stdin, so it will
