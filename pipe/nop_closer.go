@@ -51,3 +51,19 @@ type writerNopCloser struct {
 func (w writerNopCloser) Close() error {
 	return nil
 }
+
+// unwrapNopCloser unwraps the object if it is some kind of nop
+// closer, and returns the underlying object. This function is used
+// only for testing.
+func unwrapNopCloser(obj any) (any, bool) {
+	switch obj := obj.(type) {
+	case readerNopCloser:
+		return obj.Reader, true
+	case readerWriterToNopCloser:
+		return obj.Reader, true
+	case writerNopCloser:
+		return obj.Writer, true
+	default:
+		return nil, false
+	}
+}
