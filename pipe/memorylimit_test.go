@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func TestMemoryObserverTreeMem(t *testing.T) {
 	require.Greater(t, rss, 400_000_000)
 }
 
-func testMemoryObserver(t *testing.T, mbs int, stage pipe.Stage) int {
+func testMemoryObserver(t *testing.T, mbs int, stage pipe.Stage2) int {
 	ctx := context.Background()
 
 	stdinReader, stdinWriter := io.Pipe()
@@ -112,54 +113,36 @@ func TestMemoryLimitTreeMem(t *testing.T) {
 	require.ErrorContains(t, err, "memory limit exceeded")
 }
 
-type closeWrapper struct {
-	io.Writer
-	close func() error
-}
-
-func (w closeWrapper) Close() error {
-	return w.close()
-}
-
-func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (string, error) {
+func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage2) (string, error) {
 	ctx := context.Background()
-
-	stdinReader, stdinWriter := io.Pipe()
 
 	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
 	require.NoError(t, err)
 
-	// io.Pipe doesn't know if anything is listening on the other end, so once
-	// our process is expectedly killed then we'll end up blocked trying to
-	// write to it. To workaround this, make sure we close the pipe reader when
-	// we've detected that the process has exited (i.e. when stdout has been
-	// closed). This will cause our write to immediately fail with this error.
-	closedErr := fmt.Errorf("stdout was closed")
-	stdout := closeWrapper{
-		Writer: devNull,
-		close: func() error {
-			require.NoError(t, stdinReader.CloseWithError(closedErr))
-			return nil
-		},
-	}
-
 	buf := &bytes.Buffer{}
 	logger := log.New(buf, "testMemoryObserver", log.Ldate|log.Ltime)
 
-	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdoutCloser(stdout))
-	p.Add(pipe.MemoryLimit(stage, limit, LogEventHandler(logger)))
+	p := pipe.New(pipe.WithDir("/"), pipe.WithStdoutCloser(devNull))
+	p.Add(
+		pipe.Function(
+			"write-to-less",
+			func(ctx context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+				// Write some nonsense data to less.
+				var bytes [1_000_000]byte
+				for i := 0; i < mbs; i++ {
+					_, err := stdout.Write(bytes[:])
+					if err != nil {
+						require.ErrorIs(t, err, syscall.EPIPE)
+					}
+				}
+
+				return nil
+			},
+		),
+		pipe.MemoryLimit(stage, limit, LogEventHandler(logger)),
+	)
 	require.NoError(t, p.Start(ctx))
 
-	// Write some nonsense data to less.
-	var bytes [1_000_000]byte
-	for i := 0; i < mbs; i++ {
-		_, err := stdinWriter.Write(bytes[:])
-		if err != nil {
-			require.ErrorIs(t, err, closedErr)
-		}
-	}
-
-	require.NoError(t, stdinWriter.Close())
 	err = p.Wait()
 
 	return buf.String(), err

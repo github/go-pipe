@@ -11,14 +11,14 @@ import (
 
 const memoryPollInterval = time.Second
 
-// ErrMemoryLimitExceeded is the error that will be used to kill a process, if
-// necessary, from MemoryLimit.
+// ErrMemoryLimitExceeded is the error that will be used to kill a
+// process, if necessary, from MemoryLimit.
 var ErrMemoryLimitExceeded = errors.New("memory limit exceeded")
 
-// LimitableStage is the superset of Stage that must be implemented by stages
-// passed to MemoryLimit and MemoryObserver.
-type LimitableStage interface {
-	Stage
+// LimitableStage2 is the superset of Stage2 that must be implemented
+// by stages passed to MemoryLimit and MemoryObserver.
+type LimitableStage2 interface {
+	Stage2
 
 	GetRSSAnon(context.Context) (uint64, error)
 	Kill(error)
@@ -26,9 +26,9 @@ type LimitableStage interface {
 
 // MemoryLimit watches the memory usage of the stage and stops it if it
 // exceeds the given limit.
-func MemoryLimit(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Stage {
+func MemoryLimit(stage Stage2, byteLimit uint64, eventHandler func(e *Event)) Stage {
 
-	limitableStage, ok := stage.(LimitableStage)
+	limitableStage, ok := stage.(LimitableStage2)
 	if !ok {
 		eventHandler(&Event{
 			Command: stage.Name(),
@@ -46,7 +46,7 @@ func MemoryLimit(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Sta
 }
 
 func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc {
-	return func(ctx context.Context, stage LimitableStage) {
+	return func(ctx context.Context, stage LimitableStage2) {
 		var consecutiveErrors int
 
 		t := time.NewTicker(memoryPollInterval)
@@ -91,8 +91,8 @@ func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc 
 
 // MemoryObserver watches memory use of the stage and logs the maximum
 // value when the stage exits.
-func MemoryObserver(stage Stage, eventHandler func(e *Event)) Stage {
-	limitableStage, ok := stage.(LimitableStage)
+func MemoryObserver(stage Stage2, eventHandler func(e *Event)) Stage {
+	limitableStage, ok := stage.(LimitableStage2)
 	if !ok {
 		eventHandler(&Event{
 			Command: stage.Name(),
@@ -110,7 +110,7 @@ func MemoryObserver(stage Stage, eventHandler func(e *Event)) Stage {
 
 func logMaxRSS(eventHandler func(e *Event)) memoryWatchFunc {
 
-	return func(ctx context.Context, stage LimitableStage) {
+	return func(ctx context.Context, stage LimitableStage2) {
 		var (
 			maxRSS                             uint64
 			samples, errors, consecutiveErrors int
@@ -161,26 +161,51 @@ func logMaxRSS(eventHandler func(e *Event)) memoryWatchFunc {
 
 type memoryWatchStage struct {
 	nameSuffix string
-	stage      LimitableStage
+	stage      LimitableStage2
 	watch      memoryWatchFunc
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 }
 
-type memoryWatchFunc func(context.Context, LimitableStage)
+type memoryWatchFunc func(context.Context, LimitableStage2)
 
-var _ LimitableStage = (*memoryWatchStage)(nil)
+var _ LimitableStage2 = (*memoryWatchStage)(nil)
 
 func (m *memoryWatchStage) Name() string {
 	return m.stage.Name() + m.nameSuffix
 }
 
-func (m *memoryWatchStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.ReadCloser, error) {
+func (m *memoryWatchStage) Start(
+	ctx context.Context, env Env, stdin io.ReadCloser,
+) (io.ReadCloser, error) {
 	io, err := m.stage.Start(ctx, env, stdin)
 	if err != nil {
 		return nil, err
 	}
 
+	m.monitor(ctx)
+
+	return io, nil
+}
+
+func (m *memoryWatchStage) Preferences() StagePreferences {
+	return m.stage.Preferences()
+}
+
+func (m *memoryWatchStage) Start2(
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
+	if err := m.stage.Start2(ctx, env, stdin, stdout); err != nil {
+		return err
+	}
+
+	m.monitor(ctx)
+
+	return nil
+}
+
+// monitor starts up a goroutine that monitors the memory of `m`.
+func (m *memoryWatchStage) monitor(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 	m.wg.Add(1)
@@ -189,8 +214,6 @@ func (m *memoryWatchStage) Start(ctx context.Context, env Env, stdin io.ReadClos
 		m.watch(ctx, m.stage)
 		m.wg.Done()
 	}()
-
-	return io, nil
 }
 
 func (m *memoryWatchStage) Wait() error {
