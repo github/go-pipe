@@ -274,7 +274,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			ss.prefs = s.Preferences()
 		} else {
 			ss.prefs = StagePreferences{
-				StdinPreference: IOPreferenceUndefined,
+				StdinPreference:  IOPreferenceUndefined,
+				StdoutPreference: IOPreferenceUndefined,
 			}
 		}
 	}
