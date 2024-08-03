@@ -15,9 +15,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// commandStage is a pipeline `Stage2` based on running an external
-// command and piping the data through its stdin and stdout. It also
-// implements `Stage2`.
+// commandStage is a pipeline `Stage` based on running an
+// external command and piping the data through its stdin and stdout.
+// It also implements `StageWithIO`.
 type commandStage struct {
 	name string
 	cmd  *exec.Cmd
@@ -36,14 +36,14 @@ type commandStage struct {
 }
 
 var (
-	_ Stage2 = (*commandStage)(nil)
+	_ StageWithIO = (*commandStage)(nil)
 )
 
-// Command returns a pipeline `Stage2` based on the specified external
-// `command`, run with the given command-line `args`. Its stdin and
-// stdout are handled as usual, and its stderr is collected and
-// included in any `*exec.ExitError` that the command might emit.
-func Command(command string, args ...string) Stage2 {
+// Command returns a pipeline `StageWithIO` based on the specified
+// external `command`, run with the given command-line `args`. Its
+// stdin and stdout are handled as usual, and its stderr is collected
+// and included in any `*exec.ExitError` that the command might emit.
+func Command(command string, args ...string) StageWithIO {
 	if len(command) == 0 {
 		panic("attempt to create command with empty command")
 	}
@@ -56,7 +56,7 @@ func Command(command string, args ...string) Stage2 {
 // the specified `cmd`. Its stdin and stdout are handled as usual, and
 // its stderr is collected and included in any `*exec.ExitError` that
 // the command might emit.
-func CommandStage(name string, cmd *exec.Cmd) Stage2 {
+func CommandStage(name string, cmd *exec.Cmd) StageWithIO {
 	return &commandStage{
 		name: name,
 		cmd:  cmd,
@@ -76,7 +76,7 @@ func (s *commandStage) Start(
 		return nil, err
 	}
 
-	if err := s.Start2(ctx, env, stdin, pw); err != nil {
+	if err := s.StartWithIO(ctx, env, stdin, pw); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
 		return nil, err
@@ -107,7 +107,7 @@ func (s *commandStage) Preferences() StagePreferences {
 	return prefs
 }
 
-func (s *commandStage) Start2(
+func (s *commandStage) StartWithIO(
 	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
 	if s.cmd.Dir == "" {

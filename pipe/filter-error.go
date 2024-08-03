@@ -14,8 +14,8 @@ import (
 type ErrorFilter func(err error) error
 
 func FilterError(s Stage, filter ErrorFilter) Stage {
-	if s, ok := s.(Stage2); ok {
-		return efStage2{Stage2: s, filter: filter}
+	if s, ok := s.(StageWithIO); ok {
+		return efStageWithIO{StageWithIO: s, filter: filter}
 	}
 	return efStage{Stage: s, filter: filter}
 }
@@ -29,13 +29,13 @@ func (s efStage) Wait() error {
 	return s.filter(s.Stage.Wait())
 }
 
-type efStage2 struct {
-	Stage2
+type efStageWithIO struct {
+	StageWithIO
 	filter ErrorFilter
 }
 
-func (s efStage2) Wait() error {
-	return s.filter(s.Stage2.Wait())
+func (s efStageWithIO) Wait() error {
+	return s.filter(s.StageWithIO.Wait())
 }
 
 // ErrorMatcher decides whether its argument matches some class of

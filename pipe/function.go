@@ -39,7 +39,7 @@ type goStage struct {
 }
 
 var (
-	_ Stage2 = (*goStage)(nil)
+	_ StageWithIO = (*goStage)(nil)
 )
 
 func (s *goStage) Name() string {
@@ -56,7 +56,7 @@ func (s *goStage) Preferences() StagePreferences {
 func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
-	if err := s.Start2(ctx, env, stdin, pw); err != nil {
+	if err := s.StartWithIO(ctx, env, stdin, pw); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
 		return nil, err
@@ -65,7 +65,7 @@ func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.R
 	return pr, nil
 }
 
-func (s *goStage) Start2(
+func (s *goStage) StartWithIO(
 	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
 	var r io.Reader = stdin

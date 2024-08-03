@@ -32,7 +32,7 @@ import (
 // Who closes stdin and stdout?
 //
 // A `Stage` as a whole needs to be responsible for closing its end of
-// stdin and stdout (assuming that `Start()` / `Start2()` returns
+// stdin and stdout (assuming that `Start()` / `StartWithIO()` returns
 // successfully). Its doing so tells the previous/next stage that it
 // is done reading/writing data, which can affect their behavior.
 // Therefore, it should close each one as soon as it is done with it.
@@ -42,10 +42,11 @@ import (
 // Specifically, if a stage is started using `Start()`, then it is
 // responsible for closing the stdin that is passed to it, and also
 // for closing its end of the `io.Reader` that the method returns. If
-// a stage implements `Stage2` and is started using `Start2()`, then
-// it is responsible for closing both the stdin and stdout that are
-// passed in as arguments. How this should be done depends on the kind
-// of stage and whether stdin/stdout are of type `*os.File`.
+// a stage implements `StageWithIO` and is started using
+// `StartWithIO()`, then it is responsible for closing both the stdin
+// and stdout that are passed in as arguments. How this should be done
+// depends on the kind of stage and whether stdin/stdout are of type
+// `*os.File`.
 //
 // If a stage is an external command, it the subprocess ultimately
 // needs its own copies of `*os.File` file descriptors for its stdin
@@ -109,27 +110,27 @@ type Stage interface {
 	Wait() error
 }
 
-// StagePreferences is the way that a Stage2 indicates its preferences
-// about how it is run. This is used within `pipe.Pipeline` to decide
-// when to use `os.Pipe()` vs. `io.Pipe()` for creating the pipes
-// between stages.
+// StagePreferences is the way that a `StageWithIO` indicates its
+// preferences about how it is run. This is used within
+// `pipe.Pipeline` to decide when to use `os.Pipe()` vs. `io.Pipe()`
+// for creating the pipes between stages.
 type StagePreferences struct {
 	StdinPreference  IOPreference
 	StdoutPreference IOPreference
 }
 
-// Stage2 is a `Stage` that can accept both stdin and stdout arguments
+// StageWithIO is a `Stage` that can accept both stdin and stdout arguments
 // when it is started.
-type Stage2 interface {
+type StageWithIO interface {
 	Stage
 
 	// Preferences() returns this stage's preferences regarding how it
 	// should be run.
 	Preferences() StagePreferences
 
-	// Start2 starts the stage (like `Stage.Start()`), except that it
+	// StartWithIO starts the stage (like `Stage.Start()`), except that it
 	// allows the caller to pass in both stdin and stdout.
-	Start2(ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser) error
+	StartWithIO(ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser) error
 }
 
 // IOPreference describes what type of stdin / stdout a stage would

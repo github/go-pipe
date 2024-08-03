@@ -49,7 +49,7 @@ func TestMemoryObserverTreeMem(t *testing.T) {
 	require.Greater(t, rss, 400_000_000)
 }
 
-func testMemoryObserver(t *testing.T, mbs int, stage pipe.Stage2) int {
+func testMemoryObserver(t *testing.T, mbs int, stage pipe.StageWithIO) int {
 	ctx := context.Background()
 
 	stdinReader, stdinWriter := io.Pipe()
@@ -113,7 +113,7 @@ func TestMemoryLimitTreeMem(t *testing.T) {
 	require.ErrorContains(t, err, "memory limit exceeded")
 }
 
-func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage2) (string, error) {
+func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.StageWithIO) (string, error) {
 	ctx := context.Background()
 
 	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)

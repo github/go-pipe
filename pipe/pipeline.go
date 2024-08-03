@@ -242,10 +242,10 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 }
 
 type stageStarter struct {
-	stage2 Stage2
-	prefs  StagePreferences
-	stdin  io.ReadCloser
-	stdout io.WriteCloser
+	stageWithIO StageWithIO
+	prefs       StagePreferences
+	stdin       io.ReadCloser
+	stdout      io.WriteCloser
 }
 
 // Start starts the commands in the pipeline. If `Start()` exits
@@ -260,7 +260,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	ctx, p.cancel = context.WithCancel(ctx)
 
 	// We need to decide how to start the stages, especially whether
-	// to use `Stage.Start()` vs. `Stage.Start2()`, and, if the
+	// to use `Stage.Start()` vs. `Stage.StartWithIO()`, and, if the
 	// latter, what pipes to use to connect adjacent stages
 	// (`os.Pipe()` vs. `io.Pipe()`) based on the two stages'
 	// preferences.
@@ -269,8 +269,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// Collect information about each stage's type and preferences:
 	for i, s := range p.stages {
 		ss := &stageStarters[i]
-		if s, ok := s.(Stage2); ok {
-			ss.stage2 = s
+		if s, ok := s.(StageWithIO); ok {
+			ss.stageWithIO = s
 			ss.prefs = s.Preferences()
 		} else {
 			ss.prefs = StagePreferences{
@@ -286,22 +286,22 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	}
 
 	// The handling of the last stage depends on whether it is a
-	// `Stage` or a `Stage2`.
+	// `Stage` or a `StageWithIO`.
 	if p.stdout != nil {
 		i := len(p.stages) - 1
 		ss := &stageStarters[i]
 
-		if ss.stage2 != nil {
+		if ss.stageWithIO != nil {
 			ss.stdout = p.stdout
 		} else {
 			// If `p.stdout` is set but the last stage is not a
-			// `Stage2`, then we need to add an extra, synthetic stage
+			// `StageWithIO`, then we need to add an extra, synthetic stage
 			// to copy its output to `p.stdout`.
 			c := newIOCopier(p.stdout)
 			p.stages = append(p.stages, c)
 			stageStarters = append(stageStarters, stageStarter{
-				stage2: c,
-				prefs:  c.Preferences(),
+				stageWithIO: c,
+				prefs:       c.Preferences(),
 			})
 		}
 	}
@@ -342,7 +342,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 		nextSS := &stageStarters[i+1]
 
-		if ss.stage2 != nil {
+		if ss.stageWithIO != nil {
 			// We need to generate a pipe pair for this stage to use
 			// to communicate with its successor:
 			if ss.prefs.StdoutPreference == IOPreferenceFile ||
@@ -356,7 +356,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			} else {
 				nextSS.stdin, ss.stdout = io.Pipe()
 			}
-			if err := ss.stage2.Start2(ctx, p.env, ss.stdin, ss.stdout); err != nil {
+			if err := ss.stageWithIO.StartWithIO(ctx, p.env, ss.stdin, ss.stdout); err != nil {
 				nextSS.stdin.Close()
 				ss.stdout.Close()
 				return abort(i, err)
@@ -380,8 +380,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		s := p.stages[i]
 		ss := &stageStarters[i]
 
-		if ss.stage2 != nil {
-			if err := ss.stage2.Start2(ctx, p.env, ss.stdin, ss.stdout); err != nil {
+		if ss.stageWithIO != nil {
+			if err := ss.stageWithIO.StartWithIO(ctx, p.env, ss.stdin, ss.stdout); err != nil {
 				return abort(i, err)
 			}
 		} else {

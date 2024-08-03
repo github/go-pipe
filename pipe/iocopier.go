@@ -64,7 +64,7 @@ func (s *ioCopier) Preferences() StagePreferences {
 }
 
 // This method always returns `nil`.
-func (s *ioCopier) Start2(
+func (s *ioCopier) StartWithIO(
 	_ context.Context, _ Env, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
 	if stdout != nil {
