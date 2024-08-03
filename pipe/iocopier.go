@@ -7,8 +7,8 @@ import (
 	"os"
 )
 
-// ioCopier is a stage that copies its stdin to a specified
-// `io.Writer`. It generates no stdout itself.
+// ioCopier is a stage that copies its stdin to `w` then closes it. It
+// generates no stdout itself.
 type ioCopier struct {
 	w    io.WriteCloser
 	done chan struct{}
@@ -54,6 +54,51 @@ func (s *ioCopier) Start(_ context.Context, _ Env, r io.ReadCloser) (io.ReadClos
 	// context expires but `s.w.Write()` is not blocking.
 
 	return nil, nil
+}
+
+func (s *ioCopier) Preferences() StagePreferences {
+	return StagePreferences{
+		StdinPreference:  IOPreferenceUndefined,
+		StdoutPreference: IOPreferenceNil,
+	}
+}
+
+// This method always returns `nil`.
+func (s *ioCopier) StartWithIO(
+	_ context.Context, _ Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
+	if stdout != nil {
+		// We won't write anything to the supplied stdout, so if for
+		// some reason it wasn't nil, close it immediately:
+		_ = stdout.Close()
+	}
+
+	go func() {
+		_, err := io.Copy(s.w, stdin)
+		// We don't consider `ErrClosed` an error (FIXME: is this
+		// correct?):
+		if err != nil && !errors.Is(err, os.ErrClosed) {
+			s.err = err
+		}
+		if err := stdin.Close(); err != nil && s.err == nil {
+			s.err = err
+		}
+		if err := s.w.Close(); err != nil && s.err == nil {
+			s.err = err
+		}
+		close(s.done)
+	}()
+
+	// FIXME: if `s.w.Write()` is blocking (e.g., because there is a
+	// downstream process that is not reading from the other side),
+	// there's no way to terminate the copy when the context expires.
+	// This is not too bad, because the `io.Copy()` call will exit by
+	// itself when its input is closed.
+	//
+	// We could, however, be smarter about exiting more quickly if the
+	// context expires but `s.w.Write()` is not blocking.
+
+	return nil
 }
 
 func (s *ioCopier) Wait() error {
