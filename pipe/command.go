@@ -18,9 +18,13 @@ import (
 // commandStage is a pipeline `Stage` based on running an external
 // command and piping the data through its stdin and stdout.
 type commandStage struct {
-	name   string
-	stdin  io.Closer
-	cmd    *exec.Cmd
+	name string
+	cmd  *exec.Cmd
+
+	// lateClosers is a list of things that have to be closed once the
+	// command has finished.
+	lateClosers []io.Closer
+
 	done   chan struct{}
 	wg     errgroup.Group
 	stderr bytes.Buffer
@@ -29,6 +33,10 @@ type commandStage struct {
 	// `ctx.Err()` is stored here.
 	ctxErr atomic.Value
 }
+
+var (
+	_ Stage = (*commandStage)(nil)
+)
 
 // Command returns a pipeline `Stage` based on the specified external
 // `command`, run with the given command-line `args`. Its stdin and
@@ -59,33 +67,80 @@ func (s *commandStage) Name() string {
 	return s.name
 }
 
+func (s *commandStage) Preferences() StagePreferences {
+	prefs := StagePreferences{
+		StdinPreference:  IOPreferenceFile,
+		StdoutPreference: IOPreferenceFile,
+	}
+	if s.cmd.Stdin != nil {
+		prefs.StdinPreference = IOPreferenceNil
+	}
+	if s.cmd.Stdout != nil {
+		prefs.StdoutPreference = IOPreferenceNil
+	}
+
+	return prefs
+}
+
 func (s *commandStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser,
-) (io.ReadCloser, error) {
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = env.Dir
 	}
 
 	s.setupEnv(ctx, env)
 
+	// Things that have to be closed as soon as the command has
+	// started:
+	var earlyClosers []io.Closer
+
+	// See the type command for `Stage` and the long comment in
+	// `Pipeline.WithStdin()` for the explanation of this unwrapping
+	// and closing behavior.
+
 	if stdin != nil {
-		// See the long comment in `Pipeline.Start()` for the
-		// explanation of this special case.
 		switch stdin := stdin.(type) {
-		case nopCloser:
+		case readerNopCloser:
+			// In this case, we shouldn't close it. But unwrap it for
+			// efficiency's sake:
 			s.cmd.Stdin = stdin.Reader
-		case nopCloserWriterTo:
+		case readerWriterToNopCloser:
+			// In this case, we shouldn't close it. But unwrap it for
+			// efficiency's sake:
 			s.cmd.Stdin = stdin.Reader
-		default:
+		case *os.File:
+			// In this case, we can close stdin as soon as the command
+			// has started:
 			s.cmd.Stdin = stdin
+			earlyClosers = append(earlyClosers, stdin)
+		default:
+			// In this case, we need to close `stdin`, but we should
+			// only do so after the command has finished:
+			s.cmd.Stdin = stdin
+			s.lateClosers = append(s.lateClosers, stdin)
 		}
-		// Also keep a copy so that we can close it when the command exits:
-		s.stdin = stdin
 	}
 
-	stdout, err := s.cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	if stdout != nil {
+		// See the long comment in `Pipeline.Start()` for the
+		// explanation of this special case.
+		switch stdout := stdout.(type) {
+		case writerNopCloser:
+			// In this case, we shouldn't close it. But unwrap it for
+			// efficiency's sake:
+			s.cmd.Stdout = stdout.Writer
+		case *os.File:
+			// In this case, we can close stdout as soon as the command
+			// has started:
+			s.cmd.Stdout = stdout
+			earlyClosers = append(earlyClosers, stdout)
+		default:
+			// In this case, we need to close `stdout`, but we should
+			// only do so after the command has finished:
+			s.cmd.Stdout = stdout
+			s.lateClosers = append(s.lateClosers, stdout)
+		}
 	}
 
 	// If the caller hasn't arranged otherwise, read the command's
@@ -97,7 +152,7 @@ func (s *commandStage) Start(
 		// can be sure.
 		p, err := s.cmd.StderrPipe()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		s.wg.Go(func() error {
 			_, err := io.Copy(&s.stderr, p)
@@ -114,7 +169,11 @@ func (s *commandStage) Start(
 	s.runInOwnProcessGroup()
 
 	if err := s.cmd.Start(); err != nil {
-		return nil, err
+		return err
+	}
+
+	for _, closer := range earlyClosers {
+		_ = closer.Close()
 	}
 
 	// Arrange for the process to be killed (gently) if the context
@@ -128,7 +187,7 @@ func (s *commandStage) Start(
 		}
 	}()
 
-	return stdout, nil
+	return nil
 }
 
 // setupEnv sets or modifies the environment that will be passed to
@@ -217,19 +276,18 @@ func (s *commandStage) Wait() error {
 
 	// Make sure that any stderr is copied before `s.cmd.Wait()`
 	// closes the read end of the pipe:
-	wErr := s.wg.Wait()
+	wgErr := s.wg.Wait()
 
 	err := s.cmd.Wait()
 	err = s.filterCmdError(err)
 
-	if err == nil && wErr != nil {
-		err = wErr
+	if err == nil && wgErr != nil {
+		err = wgErr
 	}
 
-	if s.stdin != nil {
-		cErr := s.stdin.Close()
-		if cErr != nil && err == nil {
-			return cErr
+	for _, closer := range s.lateClosers {
+		if closeErr := closer.Close(); closeErr != nil && err == nil {
+			err = closeErr
 		}
 	}
 

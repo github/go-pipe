@@ -11,12 +11,12 @@ import (
 
 const memoryPollInterval = time.Second
 
-// ErrMemoryLimitExceeded is the error that will be used to kill a process, if
-// necessary, from MemoryLimit.
+// ErrMemoryLimitExceeded is the error that will be used to kill a
+// process, if necessary, from MemoryLimit.
 var ErrMemoryLimitExceeded = errors.New("memory limit exceeded")
 
-// LimitableStage is the superset of Stage that must be implemented by stages
-// passed to MemoryLimit and MemoryObserver.
+// LimitableStage is the superset of `Stage` that must be implemented
+// by stages passed to MemoryLimit and MemoryObserver.
 type LimitableStage interface {
 	Stage
 
@@ -175,12 +175,24 @@ func (m *memoryWatchStage) Name() string {
 	return m.stage.Name() + m.nameSuffix
 }
 
-func (m *memoryWatchStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.ReadCloser, error) {
-	io, err := m.stage.Start(ctx, env, stdin)
-	if err != nil {
-		return nil, err
+func (m *memoryWatchStage) Preferences() StagePreferences {
+	return m.stage.Preferences()
+}
+
+func (m *memoryWatchStage) Start(
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
+	if err := m.stage.Start(ctx, env, stdin, stdout); err != nil {
+		return err
 	}
 
+	m.monitor(ctx)
+
+	return nil
+}
+
+// monitor starts up a goroutine that monitors the memory of `m`.
+func (m *memoryWatchStage) monitor(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 	m.wg.Add(1)
@@ -189,8 +201,6 @@ func (m *memoryWatchStage) Start(ctx context.Context, env Env, stdin io.ReadClos
 		m.watch(ctx, m.stage)
 		m.wg.Done()
 	}()
-
-	return io, nil
 }
 
 func (m *memoryWatchStage) Wait() error {
