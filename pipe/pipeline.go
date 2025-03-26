@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync/atomic"
 )
 
@@ -53,7 +54,7 @@ type ContextValuesFunc func(context.Context) []EnvVar
 type Pipeline struct {
 	env Env
 
-	stdin  io.Reader
+	stdin  io.ReadCloser
 	stdout io.WriteCloser
 	stages []Stage
 	cancel func()
@@ -67,14 +68,6 @@ type Pipeline struct {
 }
 
 var emptyEventHandler = func(e *Event) {}
-
-type nopWriteCloser struct {
-	io.Writer
-}
-
-func (w nopWriteCloser) Close() error {
-	return nil
-}
 
 type NewPipeFn func(opts ...Option) *Pipeline
 
@@ -105,14 +98,58 @@ func WithDir(dir string) Option {
 // WithStdin assigns stdin to the first command in the pipeline.
 func WithStdin(stdin io.Reader) Option {
 	return func(p *Pipeline) {
-		p.stdin = stdin
+		// We don't want the first stage to close `stdin`, and it is
+		// not even necessarily an `io.ReadCloser`. So wrap it in a
+		// fake `io.ReadCloser` whose `Close()` method doesn't do
+		// anything.
+		//
+		// We could use `io.NopCloser()` for this purpose, but that
+		// would have a subtle problem. If the first stage is a
+		// `Command`, then it wants to set the `exec.Cmd`'s `Stdin` to
+		// an `io.Reader` corresponding to `p.stdin`. If `Cmd.Stdin`
+		// is an `*os.File`, then `exec.Cmd` will pass the file
+		// descriptor to the subcommand directly; there is no need to
+		// create a pipe and copy the data into the input side of the
+		// pipe. But if `p.stdin` is not an `*os.File`, then this
+		// optimization is prevented. And even worse, it also has the
+		// side effect that the goroutine that copies from `Cmd.Stdin`
+		// into the pipe doesn't terminate until that fd is closed by
+		// the writing side.
+		//
+		// That isn't always what we want. Consider, for example, the
+		// following snippet, where the subcommand's stdin is set to
+		// the stdin of the enclosing Go program, but wrapped with
+		// `io.NopCloser`:
+		//
+		//     cmd := exec.Command("ls")
+		//     cmd.Stdin = io.NopCloser(os.Stdin)
+		//     cmd.Stdout = os.Stdout
+		//     cmd.Stderr = os.Stderr
+		//     cmd.Run()
+		//
+		// In this case, we don't want the Go program to wait for
+		// `os.Stdin` to close (because `ls` isn't even trying to read
+		// from its stdin). But it does: `exec.Cmd` doesn't recognize
+		// that `Cmd.Stdin` is an `*os.File`, so it sets up a pipe and
+		// copies the data itself, and this goroutine doesn't
+		// terminate until `cmd.Stdin` (i.e., the Go program's own
+		// stdin) is closed. But if, for example, the Go program is
+		// run from an interactive shell session, that might never
+		// happen, in which case the program will fail to terminate,
+		// even after `ls` exits.
+		//
+		// So instead, in this special case, we wrap `stdin` in our
+		// own `nopCloser`, which behaves like `io.NopCloser`, except
+		// that `pipe.CommandStage` knows how to unwrap it before
+		// passing it to `exec.Cmd`.
+		p.stdin = newReaderNopCloser(stdin)
 	}
 }
 
 // WithStdout assigns stdout to the last command in the pipeline.
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
-		p.stdout = nopWriteCloser{stdout}
+		p.stdout = writerNopCloser{stdout}
 	}
 }
 
@@ -204,6 +241,13 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 	}
 }
 
+type stageStarter struct {
+	stageWithIO StageWithIO
+	prefs       StagePreferences
+	stdin       io.ReadCloser
+	stdout      io.WriteCloser
+}
+
 // Start starts the commands in the pipeline. If `Start()` exits
 // without an error, `Wait()` must also be called, to allow all
 // resources to be freed.
@@ -215,89 +259,139 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	atomic.StoreUint32(&p.started, 1)
 	ctx, p.cancel = context.WithCancel(ctx)
 
-	var nextStdin io.ReadCloser
-	if p.stdin != nil {
-		// We don't want the first stage to actually close this, and
-		// `p.stdin` is not even necessarily an `io.ReadCloser`. So
-		// wrap it in a fake `io.ReadCloser` whose `Close()` method
-		// doesn't do anything.
-		//
-		// We could use `io.NopCloser()` for this purpose, but it has
-		// a subtle problem. If the first stage is a `Command`, then
-		// it wants to set the `exec.Cmd`'s `Stdin` to an `io.Reader`
-		// corresponding to `p.stdin`. If `Cmd.Stdin` is an
-		// `*os.File`, then the file descriptor can be passed to the
-		// subcommand directly; there is no need for this process to
-		// create a pipe and copy the data into the input side of the
-		// pipe. But if `p.stdin` is not an `*os.File`, then this
-		// optimization is prevented. And even worse, it also has the
-		// side effect that the goroutine that copies from `Cmd.Stdin`
-		// into the pipe doesn't terminate until that fd is closed by
-		// the writing side.
-		//
-		// That isn't always what we want. Consider, for example, the
-		// following snippet, where the subcommand's stdin is set to
-		// the stdin of the enclosing Go program, but wrapped with
-		// `io.NopCloser`:
-		//
-		//     cmd := exec.Command("ls")
-		//     cmd.Stdin = io.NopCloser(os.Stdin)
-		//     cmd.Stdout = os.Stdout
-		//     cmd.Stderr = os.Stderr
-		//     cmd.Run()
-		//
-		// In this case, we don't want the Go program to wait for
-		// `os.Stdin` to close (because `ls` isn't even trying to read
-		// from its stdin). But it does: `exec.Cmd` doesn't recognize
-		// that `Cmd.Stdin` is an `*os.File`, so it sets up a pipe and
-		// copies the data itself, and this goroutine doesn't
-		// terminate until `cmd.Stdin` (i.e., the Go program's own
-		// stdin) is closed. But if, for example, the Go program is
-		// run from an interactive shell session, that might never
-		// happen, in which case the program will fail to terminate,
-		// even after `ls` exits.
-		//
-		// So instead, in this special case, we wrap `p.stdin` in our
-		// own `nopCloser`, which behaves like `io.NopCloser`, except
-		// that `pipe.CommandStage` knows how to unwrap it before
-		// passing it to `exec.Cmd`.
-		nextStdin = newNopCloser(p.stdin)
-	}
+	// We need to decide how to start the stages, especially whether
+	// to use `Stage.Start()` vs. `Stage.StartWithIO()`, and, if the
+	// latter, what pipes to use to connect adjacent stages
+	// (`os.Pipe()` vs. `io.Pipe()`) based on the two stages'
+	// preferences.
+	stageStarters := make([]stageStarter, len(p.stages), len(p.stages)+1)
 
+	// Collect information about each stage's type and preferences:
 	for i, s := range p.stages {
-		var err error
-		stdout, err := s.Start(ctx, p.env, nextStdin)
-		if err != nil {
-			// Close the pipe that the previous stage was writing to.
-			// That should cause it to exit even if it's not minding
-			// its context.
-			if nextStdin != nil {
-				_ = nextStdin.Close()
+		ss := &stageStarters[i]
+		if s, ok := s.(StageWithIO); ok {
+			ss.stageWithIO = s
+			ss.prefs = s.Preferences()
+		} else {
+			ss.prefs = StagePreferences{
+				StdinPreference:  IOPreferenceUndefined,
+				StdoutPreference: IOPreferenceUndefined,
 			}
-
-			// Kill and wait for any stages that have been started
-			// already to finish:
-			p.cancel()
-			for _, s := range p.stages[:i] {
-				_ = s.Wait()
-			}
-			p.eventHandler(&Event{
-				Command: s.Name(),
-				Msg:     "failed to start pipeline stage",
-				Err:     err,
-			})
-			return fmt.Errorf("starting pipeline stage %q: %w", s.Name(), err)
 		}
-		nextStdin = stdout
 	}
 
-	// If the pipeline was configured with a `stdout`, add a synthetic
-	// stage to copy the last stage's stdout to that writer:
+	if p.stdin != nil {
+		// Arrange for the input of the 0th stage to come from
+		// `p.stdin`:
+		stageStarters[0].stdin = p.stdin
+	}
+
+	// The handling of the last stage depends on whether it is a
+	// `Stage` or a `StageWithIO`.
 	if p.stdout != nil {
-		c := newIOCopier(p.stdout)
-		p.stages = append(p.stages, c)
-		// `ioCopier.Start()` never fails:
-		_, _ = c.Start(ctx, p.env, nextStdin)
+		i := len(p.stages) - 1
+		ss := &stageStarters[i]
+
+		if ss.stageWithIO != nil {
+			ss.stdout = p.stdout
+		} else {
+			// If `p.stdout` is set but the last stage is not a
+			// `StageWithIO`, then we need to add an extra, synthetic stage
+			// to copy its output to `p.stdout`.
+			c := newIOCopier(p.stdout)
+			p.stages = append(p.stages, c)
+			stageStarters = append(stageStarters, stageStarter{
+				stageWithIO: c,
+				prefs:       c.Preferences(),
+			})
+		}
+	}
+
+	// Clean up any processes and pipes that have been created. `i` is
+	// the index of the stage that failed to start (whose output pipe
+	// has already been cleaned up if necessary).
+	abort := func(i int, err error) error {
+		// Close the pipe that the previous stage was writing to.
+		// That should cause it to exit even if it's not minding
+		// its context.
+		if stageStarters[i].stdin != nil {
+			_ = stageStarters[i].stdin.Close()
+		}
+
+		// Kill and wait for any stages that have been started
+		// already to finish:
+		p.cancel()
+		for _, s := range p.stages[:i] {
+			_ = s.Wait()
+		}
+		p.eventHandler(&Event{
+			Command: p.stages[i].Name(),
+			Msg:     "failed to start pipeline stage",
+			Err:     err,
+		})
+		return fmt.Errorf(
+			"starting pipeline stage %q: %w", p.stages[i].Name(), err,
+		)
+	}
+
+	// Loop over all but the last stage, starting them. By the time we
+	// get to a stage, its stdin will have already been determined,
+	// but we still need to figure out its stdout and set the stdin
+	// that will be used for the subsequent stage.
+	for i, s := range p.stages[:len(p.stages)-1] {
+		ss := &stageStarters[i]
+
+		nextSS := &stageStarters[i+1]
+
+		if ss.stageWithIO != nil {
+			// We need to generate a pipe pair for this stage to use
+			// to communicate with its successor:
+			if ss.prefs.StdoutPreference == IOPreferenceFile ||
+				nextSS.prefs.StdinPreference == IOPreferenceFile {
+				// Use an OS-level pipe for the communication:
+				var err error
+				nextSS.stdin, ss.stdout, err = os.Pipe()
+				if err != nil {
+					return abort(i, err)
+				}
+			} else {
+				nextSS.stdin, ss.stdout = io.Pipe()
+			}
+			if err := ss.stageWithIO.StartWithIO(ctx, p.env, ss.stdin, ss.stdout); err != nil {
+				nextSS.stdin.Close()
+				ss.stdout.Close()
+				return abort(i, err)
+			}
+		} else {
+			// The stage will create its own stdout when we start
+			// it:
+			var err error
+			nextSS.stdin, err = s.Start(ctx, p.env, ss.stdin)
+			if err != nil {
+				return abort(i, err)
+			}
+		}
+	}
+
+	// The last stage needs special handling, because its stdout
+	// doesn't need to flow into another stage (it's already set in
+	// `ss.stdout` if it's needed).
+	{
+		i := len(p.stages) - 1
+		s := p.stages[i]
+		ss := &stageStarters[i]
+
+		if ss.stageWithIO != nil {
+			if err := ss.stageWithIO.StartWithIO(ctx, p.env, ss.stdin, ss.stdout); err != nil {
+				return abort(i, err)
+			}
+		} else {
+			var err error
+			_, err = s.Start(ctx, p.env, ss.stdin)
+			if err != nil {
+				return abort(i, err)
+			}
+		}
 	}
 
 	return nil
@@ -305,7 +399,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
 	var buf bytes.Buffer
-	p.stdout = nopWriteCloser{&buf}
+	p.stdout = writerNopCloser{&buf}
 	err := p.Run(ctx)
 	return buf.Bytes(), err
 }

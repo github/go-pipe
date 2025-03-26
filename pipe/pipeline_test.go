@@ -87,7 +87,7 @@ func TestPipelineSingleCommandWithStdout(t *testing.T) {
 	}
 }
 
-func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
+func TestPipelineStdinOSPipeThatIsNeverClosed(t *testing.T) {
 	t.Parallel()
 
 	// Make sure that the subprocess terminates on its own, as opposed
@@ -105,7 +105,10 @@ func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
 
 	var stdout bytes.Buffer
 
-	p := pipe.New(pipe.WithStdin(r), pipe.WithStdout(&stdout))
+	p := pipe.New(
+		pipe.WithStdin(r),
+		pipe.WithStdout(&stdout),
+	)
 	// Note that this command doesn't read from its stdin, so it will
 	// terminate regardless of whether `w` gets closed:
 	p.Add(pipe.Command("true"))
@@ -115,7 +118,7 @@ func TestPipelineStdinFileThatIsNeverClosed(t *testing.T) {
 	assert.NoError(t, p.Run(ctx))
 }
 
-func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
+func TestPipelineIOPipeStdinThatIsNeverClosed(t *testing.T) {
 	t.Skip("test not run because it currently deadlocks")
 
 	t.Parallel()
@@ -131,8 +134,7 @@ func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
+	r, w := io.Pipe()
 	t.Cleanup(func() {
 		_ = w.Close()
 		_ = r.Close()
@@ -140,10 +142,8 @@ func TestPipelineStdinThatIsNeverClosed(t *testing.T) {
 
 	var stdout bytes.Buffer
 
-	// The point here is to wrap `r` so that `exec.Cmd` doesn't
-	// recognize that it's an `*os.File`:
 	p := pipe.New(
-		pipe.WithStdin(io.NopCloser(r)),
+		pipe.WithStdin(r),
 		pipe.WithStdout(&stdout),
 	)
 	// Note that this command doesn't read from its stdin, so it will
@@ -159,9 +159,7 @@ func TestNontrivialPipeline(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("echo", "hello world"),
 		pipe.Command("sed", "s/hello/goodbye/"),
@@ -172,7 +170,33 @@ func TestNontrivialPipeline(t *testing.T) {
 	}
 }
 
-func TestPipelineReadFromSlowly(t *testing.T) {
+func TestOSPipePipelineReadFromSlowly(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	var buf []byte
+	readErr := make(chan error, 1)
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		var err error
+		buf, err = io.ReadAll(r)
+		readErr <- err
+	}()
+
+	p := pipe.New(pipe.WithStdoutCloser(w))
+	p.Add(pipe.Command("echo", "hello world"))
+	assert.NoError(t, p.Run(ctx))
+
+	assert.NoError(t, <-readErr)
+	assert.Equal(t, "hello world\n", string(buf))
+}
+
+func TestIOPipePipelineReadFromSlowly(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -189,14 +213,9 @@ func TestPipelineReadFromSlowly(t *testing.T) {
 		readErr <- err
 	}()
 
-	p := pipe.New(pipe.WithStdout(w))
+	p := pipe.New(pipe.WithStdoutCloser(w))
 	p.Add(pipe.Command("echo", "hello world"))
 	assert.NoError(t, p.Run(ctx))
-
-	time.Sleep(100 * time.Millisecond)
-	// It's not super-intuitive, but `w` has to be closed here so that
-	// the `io.ReadAll()` call above knows that it's done:
-	_ = w.Close()
 
 	assert.NoError(t, <-readErr)
 	assert.Equal(t, "hello world\n", string(buf))
@@ -210,8 +229,6 @@ func TestPipelineReadFromSlowly2(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-
-	dir := t.TempDir()
 
 	r, w := io.Pipe()
 
@@ -236,14 +253,9 @@ func TestPipelineReadFromSlowly2(t *testing.T) {
 		}
 	}()
 
-	p := pipe.New(pipe.WithDir(dir), pipe.WithStdout(w))
+	p := pipe.New(pipe.WithStdoutCloser(w))
 	p.Add(pipe.Command("seq", "100"))
 	assert.NoError(t, p.Run(ctx))
-
-	time.Sleep(200 * time.Millisecond)
-	// It's not super-intuitive, but `w` has to be closed here so that
-	// the `io.ReadAll()` call above knows that it's done:
-	_ = w.Close()
 
 	assert.NoError(t, <-readErr)
 	assert.Equal(t, 292, len(buf))
@@ -253,9 +265,7 @@ func TestPipelineTwoCommandsPiping(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(pipe.Command("echo", "hello world"))
 	assert.Panics(t, func() { p.Add(pipe.Command("")) })
 	out, err := p.Output(ctx)
@@ -283,9 +293,7 @@ func TestPipelineExit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("false"),
 		pipe.Command("true"),
@@ -316,11 +324,10 @@ func TestPipelineInterrupted(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
 	stdout := &bytes.Buffer{}
 
-	p := pipe.New(pipe.WithDir(dir), pipe.WithStdout(stdout))
+	p := pipe.New(pipe.WithStdout(stdout))
 	p.Add(pipe.Command("sleep", "10"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -339,11 +346,10 @@ func TestPipelineCanceled(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
 	stdout := &bytes.Buffer{}
 
-	p := pipe.New(pipe.WithDir(dir), pipe.WithStdout(stdout))
+	p := pipe.New(pipe.WithStdout(stdout))
 	p.Add(pipe.Command("sleep", "10"))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -367,9 +373,8 @@ func TestLittleEPIPE(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("sh", "-c", "sleep 1; echo foo"),
 		pipe.Command("true"),
@@ -391,9 +396,8 @@ func TestBigEPIPE(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("seq", "100000"),
 		pipe.Command("true"),
@@ -415,9 +419,8 @@ func TestIgnoredSIGPIPE(t *testing.T) {
 	}
 
 	t.Parallel()
-	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.IgnoreError(pipe.Command("seq", "100000"), pipe.IsSIGPIPE),
 		pipe.Command("echo", "foo"),
@@ -434,9 +437,7 @@ func TestFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Print("hello world"),
 		pipe.Function(
@@ -464,9 +465,7 @@ func TestPipelineWithFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(
 		pipe.Command("echo", "-n", "hello world"),
 		pipe.Function(
@@ -528,9 +527,7 @@ func TestPipelineWithLinewiseFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	// Print the numbers from 1 to 20 (generated from scratch):
 	p.Add(
 		seqFunction(20),
@@ -581,7 +578,7 @@ func TestScannerAlwaysFlushes(t *testing.T) {
 
 	var length int64
 
-	p := pipe.New(pipe.WithDir("."))
+	p := pipe.New()
 	// Print the numbers from 1 to 20 (generated from scratch):
 	p.Add(
 		pipe.IgnoreError(
@@ -629,7 +626,7 @@ func TestScannerFinishEarly(t *testing.T) {
 
 	var length int64
 
-	p := pipe.New(pipe.WithDir("."))
+	p := pipe.New()
 	// Print the numbers from 1 to 20 (generated from scratch):
 	p.Add(
 		pipe.IgnoreError(
@@ -670,9 +667,7 @@ func TestPrintln(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(pipe.Println("Look Ma, no hands!"))
 	out, err := p.Output(ctx)
 	if assert.NoError(t, err) {
@@ -684,9 +679,7 @@ func TestPrintf(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	dir := t.TempDir()
-
-	p := pipe.New(pipe.WithDir(dir))
+	p := pipe.New()
 	p.Add(pipe.Printf("Strangely recursive: %T", p))
 	out, err := p.Output(ctx)
 	if assert.NoError(t, err) {
@@ -880,10 +873,8 @@ func TestErrors(t *testing.T) {
 func BenchmarkSingleProgram(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Command("true"),
 		)
@@ -894,10 +885,8 @@ func BenchmarkSingleProgram(b *testing.B) {
 func BenchmarkTenPrograms(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Command("echo", "hello world"),
 			pipe.Command("cat"),
@@ -920,15 +909,13 @@ func BenchmarkTenPrograms(b *testing.B) {
 func BenchmarkTenFunctions(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
 		_, err := io.Copy(stdout, stdin)
 		return err
 	}
 
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Println("hello world"),
 			pipe.Function("copy1", cp),
@@ -951,15 +938,13 @@ func BenchmarkTenFunctions(b *testing.B) {
 func BenchmarkTenMixedStages(b *testing.B) {
 	ctx := context.Background()
 
-	dir := b.TempDir()
-
 	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
 		_, err := io.Copy(stdout, stdin)
 		return err
 	}
 
 	for i := 0; i < b.N; i++ {
-		p := pipe.New(pipe.WithDir(dir))
+		p := pipe.New()
 		p.Add(
 			pipe.Command("echo", "hello world"),
 			pipe.Function("copy1", cp),
@@ -975,6 +960,97 @@ func BenchmarkTenMixedStages(b *testing.B) {
 		out, err := p.Output(ctx)
 		if assert.NoError(b, err) {
 			assert.EqualValues(b, "hello world\n", out)
+		}
+	}
+}
+
+func BenchmarkMoreDataUnbuffered(b *testing.B) {
+	ctx := context.Background()
+
+	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+		_, err := io.Copy(stdout, stdin)
+		return err
+	}
+
+	for i := 0; i < b.N; i++ {
+		count := 0
+		p := pipe.New()
+		p.Add(
+			pipe.Function(
+				"seq",
+				func(ctx context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+					for i := 1; i <= 100000; i++ {
+						fmt.Fprintln(stdout, i)
+					}
+					return nil
+				},
+			),
+			pipe.Command("cat"),
+			pipe.Function("copy2", cp),
+			pipe.Command("cat"),
+			pipe.Function("copy3", cp),
+			pipe.Command("cat"),
+			pipe.Function("copy4", cp),
+			pipe.Command("cat"),
+			pipe.Function("copy5", cp),
+			pipe.Command("cat"),
+			pipe.LinewiseFunction(
+				"count",
+				func(ctx context.Context, _ pipe.Env, line []byte, stdout *bufio.Writer) error {
+					count++
+					return nil
+				},
+			),
+		)
+		err := p.Run(ctx)
+		if assert.NoError(b, err) {
+			assert.EqualValues(b, 100000, count)
+		}
+	}
+}
+
+func BenchmarkMoreDataBuffered(b *testing.B) {
+	ctx := context.Background()
+
+	cp := func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+		_, err := io.Copy(stdout, stdin)
+		return err
+	}
+
+	for i := 0; i < b.N; i++ {
+		count := 0
+		p := pipe.New()
+		p.Add(
+			pipe.Function(
+				"seq",
+				func(ctx context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+					out := bufio.NewWriter(stdout)
+					for i := 1; i <= 1000000; i++ {
+						fmt.Fprintln(out, i)
+					}
+					return out.Flush()
+				},
+			),
+			pipe.Command("cat"),
+			pipe.Function("copy2", cp),
+			pipe.Command("cat"),
+			pipe.Function("copy3", cp),
+			pipe.Command("cat"),
+			pipe.Function("copy4", cp),
+			pipe.Command("cat"),
+			pipe.Function("copy5", cp),
+			pipe.Command("cat"),
+			pipe.LinewiseFunction(
+				"count",
+				func(ctx context.Context, _ pipe.Env, line []byte, stdout *bufio.Writer) error {
+					count++
+					return nil
+				},
+			),
+		)
+		err := p.Run(ctx)
+		if assert.NoError(b, err) {
+			assert.EqualValues(b, 1000000, count)
 		}
 	}
 }

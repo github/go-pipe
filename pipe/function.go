@@ -9,7 +9,7 @@ import (
 // StageFunc is a function that can be used to power a `goStage`. It
 // should read its input from `stdin` and write its output to
 // `stdout`. `stdin` and `stdout` will be closed automatically (if
-// necessary) once the function returns.
+// non-nil) once the function returns.
 //
 // Neither `stdin` nor `stdout` are necessarily buffered. If the
 // `StageFunc` requires buffering, it needs to arrange that itself.
@@ -38,26 +38,65 @@ type goStage struct {
 	err  error
 }
 
+var (
+	_ StageWithIO = (*goStage)(nil)
+)
+
 func (s *goStage) Name() string {
 	return s.name
 }
 
+func (s *goStage) Preferences() StagePreferences {
+	return StagePreferences{
+		StdinPreference:  IOPreferenceUndefined,
+		StdoutPreference: IOPreferenceUndefined,
+	}
+}
+
 func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.ReadCloser, error) {
-	r, w := io.Pipe()
+	pr, pw := io.Pipe()
+
+	if err := s.StartWithIO(ctx, env, stdin, pw); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return nil, err
+	}
+
+	return pr, nil
+}
+
+func (s *goStage) StartWithIO(
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+) error {
+	var r io.Reader = stdin
+	if stdin, ok := stdin.(readerNopCloser); ok {
+		r = stdin.Reader
+	}
+
+	var w io.Writer = stdout
+	if stdout, ok := stdout.(writerNopCloser); ok {
+		w = stdout.Writer
+	}
+
 	go func() {
-		s.err = s.f(ctx, env, stdin, w)
-		if err := w.Close(); err != nil && s.err == nil {
-			s.err = fmt.Errorf("error closing output pipe for stage %q: %w", s.Name(), err)
+		s.err = s.f(ctx, env, r, w)
+
+		if stdout != nil {
+			if err := stdout.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
+			}
 		}
+
 		if stdin != nil {
 			if err := stdin.Close(); err != nil && s.err == nil {
 				s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
 			}
 		}
+
 		close(s.done)
 	}()
 
-	return r, nil
+	return nil
 }
 
 func (s *goStage) Wait() error {
