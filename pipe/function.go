@@ -32,19 +32,44 @@ func Function(name string, f StageFunc) Stage {
 // goStage is a `Stage` that does its work by running an arbitrary
 // `stageFunc` in a goroutine.
 type goStage struct {
-	name string
-	f    StageFunc
-	done chan struct{}
-	err  error
+	name         string
+	f            StageFunc
+	done         chan struct{}
+	err          error
+	panicHandler StagePanicHandler
 }
 
 func (s *goStage) Name() string {
 	return s.name
 }
 
+func (s *goStage) SetPanicHandler(ph StagePanicHandler) {
+	s.panicHandler = ph
+}
+
 func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.ReadCloser, error) {
 	r, w := io.Pipe()
+
 	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				if s.panicHandler == nil {
+					// Nothing to do, just panic
+					panic(p)
+				}
+
+				_ = w.Close()
+				if stdin != nil {
+					_ = stdin.Close()
+				}
+				close(s.done)
+
+				err := FromPanicValue(p)
+				s.err = err
+				s.panicHandler(err)
+			}
+		}()
+
 		s.err = s.f(ctx, env, stdin, w)
 		if err := w.Close(); err != nil && s.err == nil {
 			s.err = fmt.Errorf("error closing output pipe for stage %q: %w", s.Name(), err)
