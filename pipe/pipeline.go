@@ -64,6 +64,7 @@ type Pipeline struct {
 	started uint32
 
 	eventHandler func(e *Event)
+	panicHandler StagePanicHandler
 }
 
 var emptyEventHandler = func(e *Event) {}
@@ -179,6 +180,19 @@ func WithEventHandler(handler func(e *Event)) Option {
 	}
 }
 
+// WithStagePanicHandler sets a panic handler for the stages within a pipeline.
+// When a stage within the pipeline panics, the provided handler will be invoked, enabling
+// clients to capture the panic, such as for observability purposes.
+//
+// Note:
+//   - The client is responsible for deciding whether to recover from the panic or propagate it further.
+//   - Currently, only the Function stage supports this functionality.
+func WithStagePanicHandler(ph StagePanicHandler) Option {
+	return func(p *Pipeline) {
+		p.panicHandler = ph
+	}
+}
+
 func (p *Pipeline) hasStarted() bool {
 	return atomic.LoadUint32(&p.started) != 0
 }
@@ -265,6 +279,12 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	}
 
 	for i, s := range p.stages {
+		if p.panicHandler != nil {
+			if phs, ok := s.(StagePanicHandlerAware); ok {
+				phs.SetPanicHandler(p.panicHandler)
+			}
+		}
+
 		var err error
 		stdout, err := s.Start(ctx, p.env, nextStdin)
 		if err != nil {
