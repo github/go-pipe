@@ -181,12 +181,13 @@ func WithEventHandler(handler func(e *Event)) Option {
 }
 
 // WithStagePanicHandler sets a panic handler for the stages within a pipeline.
-// When a stage within the pipeline panics, the provided handler will be invoked, enabling
-// clients to capture the panic, such as for observability purposes.
+// When a pipeline stage panics, the provided handler will be invoked, allowing
+// the client to handle the panic in whatever way they see fit.
 //
 // Note:
-//   - The client is responsible for deciding whether to recover from the panic or propagate it further.
-//   - Currently, only the Function stage supports this functionality.
+//   - Only the Function stage supports this functionality.
+//   - The client is responsible for deciding whether to recover from the panic or panicking again.
+//   - If a panic handler is not set, the panic will be propagated normally.
 func WithStagePanicHandler(ph StagePanicHandler) Option {
 	return func(p *Pipeline) {
 		p.panicHandler = ph
@@ -279,10 +280,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	}
 
 	for i, s := range p.stages {
-		if p.panicHandler != nil {
-			if phs, ok := s.(StagePanicHandlerAware); ok {
-				phs.SetPanicHandler(p.panicHandler)
-			}
+		if phs, ok := s.(StagePanicHandlerAware); ok && p.panicHandler != nil {
+			phs.SetPanicHandler(p.panicHandler)
 		}
 
 		var err error
