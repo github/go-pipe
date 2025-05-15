@@ -52,34 +52,21 @@ func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.R
 
 	go func() {
 		defer func() {
-			if p := recover(); p != nil {
-				if s.panicHandler == nil {
-					// Nothing to do, just panic
-					panic(p)
-				}
-
-				_ = w.Close()
-				if stdin != nil {
-					_ = stdin.Close()
-				}
-				close(s.done)
-
-				err := FromPanicValue(p)
-				s.err = err
-				s.panicHandler(err)
+			// Cleanup resources on exit
+			if err := w.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing output pipe for stage %q: %w", s.Name(), err)
 			}
+			if stdin != nil {
+				if err := stdin.Close(); err != nil && s.err == nil {
+					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
+				}
+			}
+			close(s.done)
 		}()
 
+		defer s.recoverPanic()
+
 		s.err = s.f(ctx, env, stdin, w)
-		if err := w.Close(); err != nil && s.err == nil {
-			s.err = fmt.Errorf("error closing output pipe for stage %q: %w", s.Name(), err)
-		}
-		if stdin != nil {
-			if err := stdin.Close(); err != nil && s.err == nil {
-				s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
-			}
-		}
-		close(s.done)
 	}()
 
 	return r, nil
@@ -88,4 +75,14 @@ func (s *goStage) Start(ctx context.Context, env Env, stdin io.ReadCloser) (io.R
 func (s *goStage) Wait() error {
 	<-s.done
 	return s.err
+}
+
+func (s *goStage) recoverPanic() {
+	if s.panicHandler == nil {
+		return
+	}
+
+	if p := recover(); p != nil {
+		s.err = s.panicHandler(p)
+	}
 }

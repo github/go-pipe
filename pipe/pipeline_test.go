@@ -462,11 +462,11 @@ func TestFunction(t *testing.T) {
 	})
 
 	t.Run("panic with handler", func(t *testing.T) {
-		panickedMessage := make(chan error, 1)
 		p := pipe.New(
 			pipe.WithDir(dir),
-			pipe.WithStagePanicHandler(func(err error) {
-				panickedMessage <- err
+			pipe.WithStagePanicHandler(func(p any) error {
+				err := fmt.Errorf("panic handled: %v", p)
+				return err
 			}),
 		)
 		p.Add(
@@ -480,8 +480,7 @@ func TestFunction(t *testing.T) {
 		)
 
 		out, err := p.Output(ctx)
-		assert.Error(t, <-panickedMessage)
-		assert.Error(t, err)
+		assert.ErrorContains(t, err, "panic handled")
 		assert.Empty(t, out)
 	})
 }
