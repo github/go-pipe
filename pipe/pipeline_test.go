@@ -436,28 +436,53 @@ func TestFunction(t *testing.T) {
 
 	dir := t.TempDir()
 
-	p := pipe.New(pipe.WithDir(dir))
-	p.Add(
-		pipe.Print("hello world"),
-		pipe.Function(
-			"farewell",
-			func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
-				buf, err := io.ReadAll(stdin)
-				if err != nil {
+	t.Run("successful function", func(t *testing.T) {
+		p := pipe.New(pipe.WithDir(dir))
+		p.Add(
+			pipe.Print("hello world"),
+			pipe.Function(
+				"farewell",
+				func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+					buf, err := io.ReadAll(stdin)
+					if err != nil {
+						return err
+					}
+					if string(buf) != "hello world" {
+						return fmt.Errorf("expected \"hello world\"; got %q", string(buf))
+					}
+					_, err = stdout.Write([]byte("goodbye, cruel world"))
 					return err
-				}
-				if string(buf) != "hello world" {
-					return fmt.Errorf("expected \"hello world\"; got %q", string(buf))
-				}
-				_, err = stdout.Write([]byte("goodbye, cruel world"))
-				return err
-			},
-		),
-	)
+				},
+			),
+		)
 
-	out, err := p.Output(ctx)
-	assert.NoError(t, err)
-	assert.EqualValues(t, "goodbye, cruel world", out)
+		out, err := p.Output(ctx)
+		assert.NoError(t, err)
+		assert.EqualValues(t, "goodbye, cruel world", out)
+	})
+
+	t.Run("panic with handler", func(t *testing.T) {
+		p := pipe.New(
+			pipe.WithDir(dir),
+			pipe.WithStagePanicHandler(func(p any) error {
+				err := fmt.Errorf("panic handled: %v", p)
+				return err
+			}),
+		)
+		p.Add(
+			pipe.Print("hello world"),
+			pipe.Function(
+				"farewell",
+				func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+					panic("this is a panic")
+				},
+			),
+		)
+
+		out, err := p.Output(ctx)
+		assert.ErrorContains(t, err, "panic handled")
+		assert.Empty(t, out)
+	})
 }
 
 func TestPipelineWithFunction(t *testing.T) {
