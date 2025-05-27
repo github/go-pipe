@@ -25,6 +25,11 @@ type commandStage struct {
 	wg     errgroup.Group
 	stderr bytes.Buffer
 
+	// isolationPolicy is the isolation mode for the pipeline. It can be
+	// used to run the pipeline in a cgroup, or with other isolation
+	// features.
+	isolationPolicy IsolationPolicy
+
 	// If the context expired, and we attempted to kill the command,
 	// `ctx.Err()` is stored here.
 	ctxErr atomic.Value
@@ -41,6 +46,24 @@ func Command(command string, args ...string) Stage {
 
 	cmd := exec.Command(command, args...)
 	return CommandStage(command, cmd)
+}
+
+func CommandWithIsolationPolicy(command string, isolationPolicy IsolationPolicy, args ...string) Stage {
+	if len(command) == 0 {
+		panic("attempt to create command with empty command")
+	}
+
+	cmd := exec.Command(command, args...)
+	return CommandStageWithIsolationPolicy(command, cmd, isolationPolicy)
+}
+
+func CommandStageWithIsolationPolicy(name string, cmd *exec.Cmd, isolationPolicy IsolationPolicy) Stage {
+	return &commandStage{
+		name:            name,
+		cmd:             cmd,
+		done:            make(chan struct{}),
+		isolationPolicy: isolationPolicy,
+	}
 }
 
 // CommandStage returns a pipeline `Stage` with the name `name`, based on
@@ -117,9 +140,21 @@ func (s *commandStage) Start(
 		return nil, err
 	}
 
+	if s.isolationPolicy != nil {
+		if err := s.isolationPolicy.Setup(ctx, ProcessId(s.cmd.Process.Pid)); err != nil {
+			return nil, fmt.Errorf("error setting up isolation policy for command %q: %w", s.name, err)
+		}
+	}
+
 	// Arrange for the process to be killed (gently) if the context
 	// expires before the command exits normally:
 	go func() {
+		defer func() {
+			if s.isolationPolicy != nil {
+				s.isolationPolicy.Teardown(ctx)
+			}
+		}()
+
 		select {
 		case <-ctx.Done():
 			s.Kill(ctx.Err())
@@ -213,6 +248,11 @@ func (s *commandStage) filterCmdError(err error) error {
 }
 
 func (s *commandStage) Wait() error {
+	defer func() {
+		if s.isolationPolicy == nil {
+			s.isolationPolicy.Teardown(context.Background())
+		}
+	}()
 	defer close(s.done)
 
 	// Make sure that any stderr is copied before `s.cmd.Wait()`
