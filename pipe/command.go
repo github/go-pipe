@@ -141,7 +141,7 @@ func (s *commandStage) Start(
 	}
 
 	if s.isolationPolicy != nil {
-		if err := s.isolationPolicy.Setup(ctx, ProcessId(s.cmd.Process.Pid)); err != nil {
+		if err := s.isolationPolicy.Setup(ctx, uint64(s.cmd.Process.Pid)); err != nil {
 			return nil, fmt.Errorf("error setting up isolation policy for command %q: %w", s.name, err)
 		}
 	}
@@ -151,7 +151,7 @@ func (s *commandStage) Start(
 	go func() {
 		defer func() {
 			if s.isolationPolicy != nil {
-				s.isolationPolicy.Teardown(ctx)
+				_ = s.isolationPolicy.Teardown(ctx)
 			}
 		}()
 
@@ -249,8 +249,8 @@ func (s *commandStage) filterCmdError(err error) error {
 
 func (s *commandStage) Wait() error {
 	defer func() {
-		if s.isolationPolicy == nil {
-			s.isolationPolicy.Teardown(context.Background())
+		if s.isolationPolicy != nil {
+			_ = s.isolationPolicy.Teardown(context.Background())
 		}
 	}()
 	defer close(s.done)

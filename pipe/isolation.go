@@ -4,9 +4,7 @@ import (
 	"context"
 )
 
-type ProcessId int
-
 type IsolationPolicy interface {
-	Setup(context.Context, ProcessId) error
+	Setup(context.Context, uint64) error
 	Teardown(context.Context) error
 }
