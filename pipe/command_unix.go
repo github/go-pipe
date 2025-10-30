@@ -30,6 +30,11 @@ func (s *commandStage) Kill(err error) {
 	// use internal synchronization. But those methods only kill the
 	// process, not the process group, so they are not suitable here.
 
+	// Check if the process was started successfully before attempting to kill
+	if s.cmd.Process == nil {
+		return
+	}
+
 	// We started the process with PGID == PID:
 	pid := s.cmd.Process.Pid
 	select {
