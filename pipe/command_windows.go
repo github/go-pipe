@@ -9,6 +9,11 @@ func (s *commandStage) runInOwnProcessGroup() {}
 // kill is called to kill the process if the context expires. `err` is
 // the corresponding value of `Context.Err()`.
 func (s *commandStage) Kill(err error) {
+	// Check if the process was started successfully before attempting to kill
+	if s.cmd.Process == nil {
+		return
+	}
+
 	select {
 	case <-s.done:
 		// Process has ended; no need to kill it again.
