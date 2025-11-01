@@ -1,11 +1,11 @@
 module github.com/github/go-pipe
 
-go 1.19
+go 1.24.0
 
 require (
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.2.1
-	golang.org/x/sync v0.7.0
+	golang.org/x/sync v0.17.0
 )
 
 require (
