@@ -77,7 +77,7 @@ func TestWalkChildren(t *testing.T) {
 	require.Equal(t, "ready", string(ready[:]))
 
 	var numChildren int
-	ptree.WalkChildren(cmd.Process.Pid, func(pid int) {
+	ptree.WalkChildren(cmd.Process.Pid, func(_ int) {
 		numChildren++
 	})
 	assert.Equal(t, depth, numChildren)
