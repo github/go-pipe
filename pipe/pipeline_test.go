@@ -473,7 +473,7 @@ func TestFunction(t *testing.T) {
 			pipe.Print("hello world"),
 			pipe.Function(
 				"farewell",
-				func(_ context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+				func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
 					panic("this is a panic")
 				},
 			),
@@ -886,7 +886,6 @@ func TestErrors(t *testing.T) {
 			expectedErr: err1,
 		},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

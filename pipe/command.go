@@ -201,7 +201,7 @@ func (s *commandStage) filterCmdError(err error) error {
 		// doesn't do anything on Windows, where the `Signaled()`
 		// method isn't implemented (it is hardcoded to return
 		// `false`).
-		ps, ok := eErr.ProcessState.Sys().(syscall.WaitStatus)
+		ps, ok := eErr.Sys().(syscall.WaitStatus)
 		if ok && ps.Signaled() &&
 			(ps.Signal() == syscall.SIGTERM || ps.Signal() == syscall.SIGKILL) {
 			return ctxErr

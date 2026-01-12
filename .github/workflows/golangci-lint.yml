@@ -18,9 +18,9 @@ jobs:
       - name: Vendor modules for later steps.
         run: |
           go mod vendor
-      - uses: golangci/golangci-lint-action@3a919529898de77ec3da873e3063ca4b10e7f5cc # v3.7.0
+      - uses: golangci/golangci-lint-action@v9.2.0
         with:
-          # Required: the version of golangci-lint is required and must be specified without patch version: we always use the latest patch version.
-          version: v1.55
+          # The version of golangci-lint to use (full version with patch number)
+          version: v2.8.0
           args:
             -v
