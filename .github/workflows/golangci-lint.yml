@@ -20,7 +20,7 @@ jobs:
           go mod vendor
       - uses: golangci/golangci-lint-action@v9.2.0
         with:
-          # Required: the version of golangci-lint is required and must be specified without patch version: we always use the latest patch version.
+          # The version of golangci-lint to use (full version with patch number)
           version: v2.8.0
           args:
             -v
