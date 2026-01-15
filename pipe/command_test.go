@@ -76,7 +76,6 @@ func TestCopyEnvWithOverride(t *testing.T) {
 	}
 
 	for _, ex := range examples {
-		ex := ex
 		t.Run(ex.label, func(t *testing.T) {
 			assert.ElementsMatch(t, ex.expectedResult,
 				copyEnvWithOverrides(ex.env, ex.overrides))
