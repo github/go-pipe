@@ -58,7 +58,7 @@ func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc 
 				return
 			case <-t.C:
 				rss, err := stage.GetRSSAnon(ctx)
-				if err != nil && err != errProcessInfoMissing {
+				if err != nil && !errors.Is(err, errProcessInfoMissing) {
 					consecutiveErrors++
 					if consecutiveErrors >= 2 {
 						eventHandler(&Event{
