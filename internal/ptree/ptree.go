@@ -24,6 +24,10 @@ var (
 func GetProcessRSSAnon(pid int) (uint64, error) {
 	status := fmt.Sprintf("%d/status", pid)
 	f, err := procfs.Open(status)
+	if os.IsNotExist(err) {
+		// process is already gone
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
