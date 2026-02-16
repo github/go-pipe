@@ -15,6 +15,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var errProcessInfoMissing = errors.New("cmd.Process is nil")
+
 // commandStage is a pipeline `Stage` based on running an external
 // command and piping the data through its stdin and stdout.
 type commandStage struct {
