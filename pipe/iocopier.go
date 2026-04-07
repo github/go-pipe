@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 )
 
 // ioCopier is a stage that copies its stdin to a specified
@@ -13,6 +14,16 @@ type ioCopier struct {
 	w    io.WriteCloser
 	done chan struct{}
 	err  error
+}
+
+// copyBufPool reuses 32KB buffers across io.CopyBuffer calls, avoiding
+// a fresh heap allocation per copy. This matters in high-throughput
+// pipelines where many ioCopier stages run concurrently.
+var copyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 32*1024)
+		return &b
+	},
 }
 
 func newIOCopier(w io.WriteCloser) *ioCopier {
@@ -29,7 +40,9 @@ func (s *ioCopier) Name() string {
 // This method always returns `nil, nil`.
 func (s *ioCopier) Start(_ context.Context, _ Env, r io.ReadCloser) (io.ReadCloser, error) {
 	go func() {
-		_, err := io.Copy(s.w, r)
+		bp := copyBufPool.Get().(*[]byte)
+		_, err := io.CopyBuffer(s.w, r, *bp)
+		copyBufPool.Put(bp)
 		// We don't consider `ErrClosed` an error (FIXME: is this
 		// correct?):
 		if err != nil && !errors.Is(err, os.ErrClosed) {
