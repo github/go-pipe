@@ -65,6 +65,7 @@ type Pipeline struct {
 	started uint32
 
 	eventHandler func(e *Event)
+	panicHandler StagePanicHandler
 }
 
 var emptyEventHandler = func(e *Event) {}
@@ -216,6 +217,15 @@ func WithEventHandler(handler func(e *Event)) Option {
 	}
 }
 
+// WithStagePanicHandler sets a panic handler for the stages within a pipeline.
+// When a pipeline stage panics, the provided handler will be invoked, allowing
+// the client to handle the panic in whatever way they see fit.
+func WithStagePanicHandler(ph StagePanicHandler) Option {
+	return func(p *Pipeline) {
+		p.panicHandler = ph
+	}
+}
+
 func (p *Pipeline) hasStarted() bool {
 	return atomic.LoadUint32(&p.started) != 0
 }
@@ -315,6 +325,10 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		ss := &stageStarters[i]
 		nextSS := &stageStarters[i+1]
 
+		if phs, ok := s.(StagePanicHandlerAware); ok && p.panicHandler != nil {
+			phs.SetPanicHandler(p.panicHandler)
+		}
+
 		// We need to generate a pipe pair for this stage to use
 		// to communicate with its successor:
 		if ss.prefs.StdoutPreference == IOPreferenceFile ||
@@ -342,6 +356,10 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		i := len(p.stages) - 1
 		s := p.stages[i]
 		ss := &stageStarters[i]
+
+		if phs, ok := s.(StagePanicHandlerAware); ok && p.panicHandler != nil {
+			phs.SetPanicHandler(p.panicHandler)
+		}
 
 		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout); err != nil {
 			return abort(i, err)

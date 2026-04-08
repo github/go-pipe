@@ -32,18 +32,24 @@ func Function(name string, f StageFunc) Stage {
 // goStage is a `Stage` that does its work by running an arbitrary
 // `stageFunc` in a goroutine.
 type goStage struct {
-	name string
-	f    StageFunc
-	done chan struct{}
-	err  error
+	name         string
+	f            StageFunc
+	done         chan struct{}
+	err          error
+	panicHandler StagePanicHandler
 }
 
 var (
-	_ Stage = (*goStage)(nil)
+	_ Stage                  = (*goStage)(nil)
+	_ StagePanicHandlerAware = (*goStage)(nil)
 )
 
 func (s *goStage) Name() string {
 	return s.name
+}
+
+func (s *goStage) SetPanicHandler(ph StagePanicHandler) {
+	s.panicHandler = ph
 }
 
 func (s *goStage) Preferences() StagePreferences {
@@ -67,21 +73,24 @@ func (s *goStage) Start(
 	}
 
 	go func() {
+		defer close(s.done)
+		defer func() {
+			if stdin != nil {
+				if err := stdin.Close(); err != nil && s.err == nil {
+					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
+				}
+			}
+		}()
+		defer func() {
+			if stdout != nil {
+				if err := stdout.Close(); err != nil && s.err == nil {
+					s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
+				}
+			}
+		}()
+		defer s.recoverPanic()
+
 		s.err = s.f(ctx, env, r, w)
-
-		if stdout != nil {
-			if err := stdout.Close(); err != nil && s.err == nil {
-				s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
-			}
-		}
-
-		if stdin != nil {
-			if err := stdin.Close(); err != nil && s.err == nil {
-				s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
-			}
-		}
-
-		close(s.done)
 	}()
 
 	return nil
@@ -90,4 +99,14 @@ func (s *goStage) Start(
 func (s *goStage) Wait() error {
 	<-s.done
 	return s.err
+}
+
+func (s *goStage) recoverPanic() {
+	if s.panicHandler == nil {
+		return
+	}
+
+	if p := recover(); p != nil {
+		s.err = s.panicHandler(p)
+	}
 }

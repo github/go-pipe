@@ -457,6 +457,27 @@ func TestFunction(t *testing.T) {
 		assert.NoError(t, err)
 		assert.EqualValues(t, "goodbye, cruel world", out)
 	})
+
+	t.Run("panic with handler", func(t *testing.T) {
+		p := pipe.New(
+			pipe.WithStagePanicHandler(func(p any) error {
+				return fmt.Errorf("panic handled: %v", p)
+			}),
+		)
+		p.Add(
+			pipe.Print("hello world"),
+			pipe.Function(
+				"farewell",
+				func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
+					panic("this is a panic")
+				},
+			),
+		)
+
+		out, err := p.Output(ctx)
+		assert.ErrorContains(t, err, "panic handled")
+		assert.Empty(t, out)
+	})
 }
 
 func TestPipelineWithFunction(t *testing.T) {
