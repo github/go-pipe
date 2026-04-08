@@ -2,8 +2,10 @@ package pipe
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"testing"
 )
 
@@ -71,5 +73,49 @@ func TestIOCopierPoolBufferUsed(t *testing.T) {
 		t.Errorf("ioCopier allocated %d bytes during copy (max %d); "+
 			"pool buffer may be bypassed by *os.File WriterTo",
 			allocBytes, maxBytes)
+	}
+}
+
+// readFromWriter is a test writer that implements io.ReaderFrom and
+// records whether ReadFrom was called.
+type readFromWriter struct {
+	bytes.Buffer
+	readFromCalled atomic.Bool
+}
+
+func (w *readFromWriter) ReadFrom(r io.Reader) (int64, error) {
+	w.readFromCalled.Store(true)
+	return w.Buffer.ReadFrom(r)
+}
+
+func (w *readFromWriter) Close() error { return nil }
+
+// TestIOCopierUsesReadFrom verifies that ioCopier dispatches to
+// ReaderFrom when the destination writer supports it, even when
+// wrapped in nopWriteCloser (as happens with WithStdout).
+func TestIOCopierUsesReadFrom(t *testing.T) {
+	const payload = "hello readfrom\n"
+
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		pw.Write([]byte(payload))
+		pw.Close()
+	}()
+
+	w := &readFromWriter{}
+	c := newIOCopier(nopWriteCloser{w})
+	c.Start(nil, Env{}, pr)
+	c.Wait()
+
+	if w.Buffer.String() != payload {
+		t.Fatalf("unexpected output: %q", w.Buffer.String())
+	}
+
+	if !w.readFromCalled.Load() {
+		t.Error("ioCopier did not call ReadFrom on destination; " +
+			"nopWriteCloser may be hiding the ReaderFrom interface")
 	}
 }
