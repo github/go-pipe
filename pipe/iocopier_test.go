@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"runtime"
@@ -26,13 +27,13 @@ func TestIOCopierPoolBufferUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
-		pw.Write([]byte(payload))
+		_, _ = pw.Write([]byte(payload))
 		pw.Close()
 	}()
 	var warmBuf bytes.Buffer
 	c := newIOCopier(nopWriteCloser{&warmBuf})
-	c.Start(nil, Env{}, pr)
-	c.Wait()
+	_, _ = c.Start(context.TODO(), Env{}, pr)
+	_ = c.Wait()
 
 	// Now measure: run the copy and check how many bytes were allocated.
 	// If the pool buffer is bypassed, a fresh 32KB buffer is allocated.
@@ -41,7 +42,7 @@ func TestIOCopierPoolBufferUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
-		pw.Write([]byte(payload))
+		_, _ = pw.Write([]byte(payload))
 		pw.Close()
 	}()
 	var buf bytes.Buffer
@@ -55,8 +56,8 @@ func TestIOCopierPoolBufferUsed(t *testing.T) {
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 
-	c.Start(nil, Env{}, pr)
-	c.Wait()
+	_, _ = c.Start(context.TODO(), Env{}, pr)
+	_ = c.Wait()
 
 	runtime.GC()
 	runtime.ReadMemStats(&m2)
@@ -101,17 +102,17 @@ func TestIOCopierUsesReadFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
-		pw.Write([]byte(payload))
+		_, _ = pw.Write([]byte(payload))
 		pw.Close()
 	}()
 
 	w := &readFromWriter{}
 	c := newIOCopier(nopWriteCloser{w})
-	c.Start(nil, Env{}, pr)
-	c.Wait()
+	_, _ = c.Start(context.TODO(), Env{}, pr)
+	_ = c.Wait()
 
-	if w.Buffer.String() != payload {
-		t.Fatalf("unexpected output: %q", w.Buffer.String())
+	if w.String() != payload {
+		t.Fatalf("unexpected output: %q", w.String())
 	}
 
 	if !w.readFromCalled.Load() {
