@@ -297,11 +297,8 @@ func (m *memoryWatchStage) monitor(ctx context.Context) {
 }
 
 func (m *memoryWatchStage) Wait() error {
-	if err := m.stage.Wait(); err != nil {
-		return err
-	}
-	m.stopWatching()
-	return nil
+	defer m.stopWatching()
+	return m.stage.Wait()
 }
 
 func (m *memoryWatchStage) GetRSSAnon(ctx context.Context) (uint64, error) {
