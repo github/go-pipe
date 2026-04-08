@@ -26,6 +26,10 @@ var copyBufPool = sync.Pool{
 	},
 }
 
+// readerOnly wraps an io.Reader, hiding any other interfaces (such as
+// WriterTo) so that io.CopyBuffer is forced to use the provided buffer.
+type readerOnly struct{ io.Reader }
+
 func newIOCopier(w io.WriteCloser) *ioCopier {
 	return &ioCopier{
 		w:    w,
@@ -41,7 +45,13 @@ func (s *ioCopier) Name() string {
 func (s *ioCopier) Start(_ context.Context, _ Env, r io.ReadCloser) (io.ReadCloser, error) {
 	go func() {
 		bp := copyBufPool.Get().(*[]byte)
-		_, err := io.CopyBuffer(s.w, r, *bp)
+		// Strip all interfaces except Read from r so that
+		// io.CopyBuffer always uses the provided pool buffer.
+		// Without this, *os.File's WriterTo (added in Go 1.26)
+		// causes CopyBuffer to call File.WriteTo, which falls
+		// back to io.Copy with a fresh allocation, bypassing
+		// the pool entirely.
+		_, err := io.CopyBuffer(s.w, readerOnly{r}, *bp)
 		copyBufPool.Put(bp)
 		// We don't consider `ErrClosed` an error (FIXME: is this
 		// correct?):
