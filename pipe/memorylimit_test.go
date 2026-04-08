@@ -113,6 +113,84 @@ func TestMemoryLimitTreeMem(t *testing.T) {
 	require.ErrorContains(t, err, "memory limit exceeded")
 }
 
+func TestMemoryLimitWithObserverSimple(t *testing.T) {
+	t.Parallel()
+	msg, err := testMemoryLimitWithObserver(t, 400, 10_000_000, pipe.Command("less"))
+	assert.Contains(t, msg, "exceeded allowed memory")
+	assert.Contains(t, msg, "limit=10000000")
+	require.ErrorContains(t, err, "memory limit exceeded")
+}
+
+func TestMemoryLimitWithObserverTreeMem(t *testing.T) {
+	t.Parallel()
+	msg, err := testMemoryLimitWithObserver(t, 400, 10_000_000, pipe.Command("sh", "-c", "less; :"))
+	assert.Contains(t, msg, "exceeded allowed memory")
+	assert.Contains(t, msg, "limit=10000000")
+	require.ErrorContains(t, err, "memory limit exceeded")
+}
+
+func TestMemoryLimitWithObserverLogsPeakOnKill(t *testing.T) {
+	t.Parallel()
+	msg, err := testMemoryLimitWithObserver(t, 400, 10_000_000, pipe.Command("less"))
+	assert.Contains(t, msg, "exceeded allowed memory")
+	assert.Contains(t, msg, "peak memory usage")
+	require.ErrorContains(t, err, "memory limit exceeded")
+}
+
+func TestMemoryLimitWithObserverBelowLimit(t *testing.T) {
+	t.Parallel()
+	rss := testMemoryLimitWithObserverBelowLimit(t, 400, pipe.Command("less"))
+	require.Greater(t, rss, 400_000_000)
+}
+
+func TestMemoryLimitWithObserverBelowLimitTreeMem(t *testing.T) {
+	t.Parallel()
+	rss := testMemoryLimitWithObserverBelowLimit(t, 400, pipe.Command("sh", "-c", "less; :"))
+	require.Greater(t, rss, 400_000_000)
+}
+
+// testMemoryLimitWithObserverBelowLimit exercises the observer half of
+// `MemoryLimitWithObserver` when the memory limit is never hit: with a
+// 100GiB limit, less should never be killed, but the wrapper should
+// still poll RSS and emit a "peak memory usage" event when the stage
+// exits normally. Mirrors `testMemoryObserver` in structure — we hold
+// stdin open across at least one poll interval so RSS samples are
+// guaranteed to be taken before the stage is allowed to exit.
+func testMemoryLimitWithObserverBelowLimit(t *testing.T, mbs int, stage pipe.Stage) int {
+	ctx := context.Background()
+
+	stdinReader, stdinWriter := io.Pipe()
+
+	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
+	require.NoError(t, err)
+
+	buf := &bytes.Buffer{}
+	logger := log.New(buf, "testMemoryLimitWithObserverBelowLimit", log.Ldate|log.Ltime)
+
+	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdout(devNull))
+	p.Add(pipe.MemoryLimitWithObserver(stage, 100*1024*1024*1024, LogEventHandler(logger)))
+	require.NoError(t, p.Start(ctx))
+
+	var bytes [1_000_000]byte
+	for i := 0; i < mbs; i++ {
+		n, err := stdinWriter.Write(bytes[:])
+		require.NoError(t, err)
+		require.Equal(t, len(bytes), n)
+	}
+
+	// Wrapper polls once per second; sleep long enough to guarantee at
+	// least one sample is taken before the stage is allowed to exit.
+	time.Sleep(2 * time.Second)
+
+	require.NoError(t, stdinWriter.Close())
+	require.NoError(t, p.Wait())
+
+	output := buf.String()
+	assert.Contains(t, output, "peak memory usage")
+
+	return maxBytes(output)
+}
+
 func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (string, error) {
 	ctx := context.Background()
 
@@ -140,6 +218,39 @@ func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (str
 			},
 		),
 		pipe.MemoryLimit(stage, limit, LogEventHandler(logger)),
+	)
+	require.NoError(t, p.Start(ctx))
+
+	err = p.Wait()
+
+	return buf.String(), err
+}
+
+func testMemoryLimitWithObserver(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (string, error) {
+	ctx := context.Background()
+
+	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
+	require.NoError(t, err)
+
+	buf := &bytes.Buffer{}
+	logger := log.New(buf, "testMemoryLimitWithObserver", log.Ldate|log.Ltime)
+
+	p := pipe.New(pipe.WithDir("/"), pipe.WithStdoutCloser(devNull))
+	p.Add(
+		pipe.Function(
+			"write-to-less",
+			func(ctx context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+				var bytes [1_000_000]byte
+				for i := 0; i < mbs; i++ {
+					_, err := stdout.Write(bytes[:])
+					if err != nil {
+						require.ErrorIs(t, err, syscall.EPIPE)
+					}
+				}
+				return nil
+			},
+		),
+		pipe.MemoryLimitWithObserver(stage, limit, LogEventHandler(logger)),
 	)
 	require.NoError(t, p.Start(ctx))
 

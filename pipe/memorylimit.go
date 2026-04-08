@@ -89,6 +89,99 @@ func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc 
 	}
 }
 
+// MemoryLimitWithObserver combines MemoryLimit and MemoryObserver in
+// one goroutine. It watches the memory usage of the stage, stops it
+// if it exceeds the given limit, and logs the peak memory usage when
+// the stage exits.
+func MemoryLimitWithObserver(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Stage {
+	limitableStage, ok := stage.(LimitableStage)
+	if !ok {
+		eventHandler(&Event{
+			Command: stage.Name(),
+			Msg:     "invalid pipe.MemoryLimitWithObserver usage",
+			Err:     fmt.Errorf("invalid pipe.MemoryLimitWithObserver usage"),
+		})
+		return stage
+	}
+
+	return &memoryWatchStage{
+		nameSuffix: " with memory limit",
+		stage:      limitableStage,
+		watch:      killAtLimitAndObserve(byteLimit, eventHandler),
+	}
+}
+
+func killAtLimitAndObserve(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc {
+	return func(ctx context.Context, stage LimitableStage) {
+		var (
+			maxRSS                               uint64
+			samples, errCount, consecutiveErrors int
+			killed                               bool
+		)
+
+		t := time.NewTicker(memoryPollInterval)
+		defer t.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				eventHandler(&Event{
+					Command: stage.Name(),
+					Msg:     "peak memory usage",
+					Context: map[string]interface{}{
+						"max_rss_bytes": maxRSS,
+						"samples":       samples,
+						"errors":        errCount,
+					},
+				})
+				return
+			case <-t.C:
+				if killed {
+					continue
+				}
+
+				rss, err := stage.GetRSSAnon(ctx)
+				if err != nil {
+					if !errors.Is(err, errProcessInfoMissing) {
+						errCount++
+						consecutiveErrors++
+						if consecutiveErrors == 2 {
+							eventHandler(&Event{
+								Command: stage.Name(),
+								Msg:     "error getting RSS",
+								Err:     err,
+							})
+						}
+					} else {
+						consecutiveErrors = 0
+					}
+					continue
+				}
+
+				consecutiveErrors = 0
+				samples++
+				if rss > maxRSS {
+					maxRSS = rss
+				}
+
+				if rss >= byteLimit {
+					eventHandler(&Event{
+						Command: stage.Name(),
+						Msg:     "stage exceeded allowed memory use",
+						Err:     fmt.Errorf("stage exceeded allowed memory use"),
+						Context: map[string]interface{}{
+							"limit": byteLimit,
+							"used":  rss,
+						},
+					})
+					stage.Kill(ErrMemoryLimitExceeded)
+					killed = true
+				}
+			}
+		}
+	}
+}
+
 // MemoryObserver watches memory use of the stage and logs the maximum
 // value when the stage exits.
 func MemoryObserver(stage Stage, eventHandler func(e *Event)) Stage {
