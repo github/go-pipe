@@ -269,6 +269,28 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	atomic.StoreUint32(&p.started, 1)
 	ctx, p.cancel = context.WithCancel(ctx)
 
+	if len(p.stages) == 0 {
+		if p.stdout == nil {
+			// No stages and no destination: there is nothing to do
+			// and nowhere to put `p.stdin` even if it was set.
+			return nil
+		}
+		// No stages but a destination was configured: synthesize an
+		// identity-copy stage so that `WithStdin()` is drained into
+		// `WithStdout()`/`WithStdoutCloser()` and the destination
+		// closer (if any) is invoked.
+		p.stages = append(p.stages, Function(
+			"identity",
+			func(_ context.Context, _ Env, stdin io.Reader, stdout io.Writer) error {
+				if stdin == nil {
+					return nil
+				}
+				_, err := io.Copy(stdout, stdin)
+				return err
+			},
+		))
+	}
+
 	// We need to decide how to start the stages, especially what
 	// pipes to use to connect adjacent stages (`os.Pipe()` vs.
 	// `io.Pipe()`) based on the two stages' preferences.

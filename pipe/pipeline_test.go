@@ -26,6 +26,60 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func TestPipelineEmpty(t *testing.T) {
+	t.Parallel()
+	p := pipe.New()
+	assert.NoError(t, p.Run(context.Background()))
+}
+
+func TestPipelineEmptyWithStdinAndStdout(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout := &bytes.Buffer{}
+	p := pipe.New(
+		pipe.WithStdin(strings.NewReader("hello world\n")),
+		pipe.WithStdout(stdout),
+	)
+	if assert.NoError(t, p.Run(ctx)) {
+		assert.Equal(t, "hello world\n", stdout.String())
+	}
+}
+
+func TestPipelineEmptyOutput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := pipe.New(pipe.WithStdin(strings.NewReader("hello world\n")))
+	out, err := p.Output(ctx)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "hello world\n", string(out))
+	}
+}
+
+func TestPipelineEmptyWithStdoutCloser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout := &closeTrackingWriter{}
+	p := pipe.New(
+		pipe.WithStdin(strings.NewReader("hello world\n")),
+		pipe.WithStdoutCloser(stdout),
+	)
+	if assert.NoError(t, p.Run(ctx)) {
+		assert.Equal(t, "hello world\n", stdout.buf.String())
+		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
+	}
+}
+
+type closeTrackingWriter struct {
+	buf    bytes.Buffer
+	closed bool
+}
+
+func (w *closeTrackingWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+func (w *closeTrackingWriter) Close() error {
+	w.closed = true
+	return nil
+}
+
 func TestPipelineFirstStageFailsToStart(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
