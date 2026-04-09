@@ -29,6 +29,7 @@ type Env struct {
 // and is not reported to the caller.
 //
 //revive:disable:error-naming
+//nolint:staticcheck // ST1012: FinishEarly is the intentional name for this sentinel error
 var FinishEarly = errors.New("finish stage early")
 
 //revive:enable:error-naming
@@ -68,7 +69,7 @@ type Pipeline struct {
 	panicHandler StagePanicHandler
 }
 
-var emptyEventHandler = func(e *Event) {}
+var emptyEventHandler = func(_ *Event) {}
 
 type NewPipeFn func(opts ...Option) *Pipeline
 

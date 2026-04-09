@@ -1001,7 +1001,7 @@ func BenchmarkMoreDataUnbuffered(b *testing.B) {
 		p.Add(
 			pipe.Function(
 				"seq",
-				func(ctx context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+				func(_ context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
 					for i := 1; i <= 100000; i++ {
 						fmt.Fprintln(stdout, i)
 					}
@@ -1019,7 +1019,7 @@ func BenchmarkMoreDataUnbuffered(b *testing.B) {
 			pipe.Command("cat"),
 			pipe.LinewiseFunction(
 				"count",
-				func(ctx context.Context, _ pipe.Env, line []byte, stdout *bufio.Writer) error {
+				func(_ context.Context, _ pipe.Env, _ []byte, _ *bufio.Writer) error {
 					count++
 					return nil
 				},
@@ -1046,7 +1046,7 @@ func BenchmarkMoreDataBuffered(b *testing.B) {
 		p.Add(
 			pipe.Function(
 				"seq",
-				func(ctx context.Context, _ pipe.Env, stdin io.Reader, stdout io.Writer) error {
+				func(_ context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
 					out := bufio.NewWriter(stdout)
 					for i := 1; i <= 1000000; i++ {
 						fmt.Fprintln(out, i)
@@ -1065,7 +1065,7 @@ func BenchmarkMoreDataBuffered(b *testing.B) {
 			pipe.Command("cat"),
 			pipe.LinewiseFunction(
 				"count",
-				func(ctx context.Context, _ pipe.Env, line []byte, stdout *bufio.Writer) error {
+				func(_ context.Context, _ pipe.Env, _ []byte, _ *bufio.Writer) error {
 					count++
 					return nil
 				},

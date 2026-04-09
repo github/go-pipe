@@ -204,7 +204,7 @@ func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (str
 	p.Add(
 		pipe.Function(
 			"write-to-less",
-			func(ctx context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+			func(_ context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
 				// Write some nonsense data to less.
 				var bytes [1_000_000]byte
 				for i := 0; i < mbs; i++ {
@@ -239,7 +239,7 @@ func testMemoryLimitWithObserver(t *testing.T, mbs int, limit uint64, stage pipe
 	p.Add(
 		pipe.Function(
 			"write-to-less",
-			func(ctx context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+			func(_ context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
 				var bytes [1_000_000]byte
 				for i := 0; i < mbs; i++ {
 					_, err := stdout.Write(bytes[:])
