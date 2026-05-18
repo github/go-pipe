@@ -4,9 +4,19 @@ package ptree
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+)
+
+const (
+	// initialReadBufSize is the starting capacity of the buffer used for
+	// reading /proc files. /proc/<pid>/status is typically ~1 KiB and the
+	// per-task "children" files are smaller, so 4 KiB covers the common
+	// case in a single read.
+	initialReadBufSize = 4 * 1024
 )
 
 var errNoRss = errors.New("RssAnon was not found")
@@ -21,10 +31,72 @@ func NewProcessTree(path string) ProcessTree {
 	}
 }
 
+// readBufPool reuses the byte buffer that holds the contents of a /proc file
+// across calls to getProcessRSSAnon / walkChildrenFile, so that the
+// per-poll work doesn't allocate (and then garbage-collect) a fresh buffer
+// for every process in the tree.
+var readBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, initialReadBufSize)
+		return &b
+	},
+}
+
+// readProcFile reads all of path into a buffer borrowed from readBufPool.
+//
+// On success, the returned slice is only valid until bufPtr is returned to
+// the pool, which the caller MUST do (typically with
+// `defer readBufPool.Put(bufPtr)`, placed after the error check).
+//
+// On error, bufPtr is nil and the buffer has already been released, so the
+// caller must not Put it back.
+//
+// Compared to os.ReadFile, this skips the (useless for /proc) Stat call
+// used to pre-size the buffer and reuses the buffer across calls. It also
+// returns the underlying *[]byte rather than a closure so the release path
+// allocates nothing.
+func readProcFile(path string) (data []byte, bufPtr *[]byte, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+
+	bufPtr = readBufPool.Get().(*[]byte)
+	buf := (*bufPtr)[:0]
+	for {
+		if len(buf) == cap(buf) {
+			// Grow via append; this only allocates if the pooled
+			// buffer was too small. Subsequent calls will reuse
+			// the grown buffer because we store it back below.
+			buf = append(buf, 0)[:len(buf)]
+		}
+		n, rerr := f.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+n]
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			*bufPtr = buf
+			readBufPool.Put(bufPtr)
+			return nil, nil, rerr
+		}
+		if n == 0 {
+			// Defensive: io.Reader allows (0, nil) returns; treat
+			// as EOF rather than spinning. Real *os.File on /proc
+			// shouldn't hit this, but mocks or future runtime
+			// behavior might.
+			break
+		}
+	}
+	*bufPtr = buf
+	return buf, bufPtr, nil
+}
+
 // Return the RSSAnon of a single process `pid`.
 func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
 	status := pt.path + "/" + strconv.Itoa(pid) + "/status"
-	data, err := os.ReadFile(status)
+	data, bufPtr, err := readProcFile(status)
 	if os.IsNotExist(err) {
 		// process is already gone
 		return 0, nil
@@ -32,6 +104,7 @@ func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	defer readBufPool.Put(bufPtr)
 
 	prefix := []byte("RssAnon:")
 	rest := data
@@ -109,10 +182,11 @@ func (pt ProcessTree) walkChildPids(pid int, walkFn func(int), visited map[int]b
 }
 
 func (pt ProcessTree) walkChildrenFile(filename string, walkFn func(int), visited map[int]bool) {
-	data, err := os.ReadFile(filename)
+	data, bufPtr, err := readProcFile(filename)
 	if err != nil {
 		return
 	}
+	defer readBufPool.Put(bufPtr)
 
 	for _, pidStr := range strings.Fields(string(data)) {
 		pid, err := strconv.Atoi(pidStr)
