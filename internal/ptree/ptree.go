@@ -4,7 +4,6 @@ package ptree
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,7 +28,7 @@ func NewProcessTree(path string) ProcessTree {
 
 // Return the RSSAnon of a single process `pid`.
 func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
-	status := filepath.Join(pt.path, fmt.Sprintf("%d/status", pid))
+	status := pt.path + "/" + strconv.Itoa(pid) + "/status"
 	f, err := os.Open(status)
 	if os.IsNotExist(err) {
 		// process is already gone
@@ -86,7 +85,7 @@ func (pt ProcessTree) WalkChildren(pid int, walkFn func(int)) {
 }
 
 func (pt ProcessTree) walkChildPids(pid int, walkFn func(int), visited map[int]bool) {
-	matches, err := filepath.Glob(filepath.Join(pt.path, fmt.Sprintf("%d/task/*/children", pid)))
+	matches, err := filepath.Glob(pt.path + "/" + strconv.Itoa(pid) + "/task/*/children")
 	if err != nil {
 		return
 	}
