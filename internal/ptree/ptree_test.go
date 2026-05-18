@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"testing"
 
@@ -34,7 +35,14 @@ func writeStatus(t testing.TB, root string, pid int, rssKB uint64) {
 // being absent for leaves.
 func writeChildren(t testing.TB, root string, pid int, children []int) {
 	t.Helper()
-	taskDir := filepath.Join(root, strconv.Itoa(pid), "task", strconv.Itoa(pid))
+	writeThreadChildren(t, root, pid, pid, children)
+}
+
+// writeThreadChildren creates <root>/<pid>/task/<tid>/children for a specific
+// thread id, so tests can exercise multi-threaded processes.
+func writeThreadChildren(t testing.TB, root string, pid, tid int, children []int) {
+	t.Helper()
+	taskDir := filepath.Join(root, strconv.Itoa(pid), "task", strconv.Itoa(tid))
 	require.NoError(t, os.MkdirAll(taskDir, 0o755))
 	var buf bytes.Buffer
 	for _, c := range children {
@@ -112,6 +120,40 @@ func TestGetProcessTreeRSSAnon(t *testing.T) {
 		total, err := pt.GetProcessTreeRSSAnon(100)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), total)
+	})
+}
+
+func TestWalkChildren(t *testing.T) {
+	t.Run("walks all descendants", func(t *testing.T) {
+		// 100 -> {101, 102 -> 103}. Verifies the callback fires for
+		// every descendant (not just direct children) and is not
+		// invoked for the root.
+		root := t.TempDir()
+		writeChildren(t, root, 100, []int{101, 102})
+		writeChildren(t, root, 102, []int{103})
+
+		pt := ptree.NewProcessTree(root)
+
+		var seen []int
+		pt.WalkChildren(100, func(pid int) { seen = append(seen, pid) })
+		sort.Ints(seen)
+		assert.Equal(t, []int{101, 102, 103}, seen)
+	})
+
+	t.Run("iterates every thread under task/ and dedups", func(t *testing.T) {
+		// 100 has two threads (100 and 200); each thread reports a
+		// different set of children, with 102 listed by both threads
+		// to exercise the visited dedup.
+		root := t.TempDir()
+		writeThreadChildren(t, root, 100, 100, []int{101, 102})
+		writeThreadChildren(t, root, 100, 200, []int{102, 103})
+
+		pt := ptree.NewProcessTree(root)
+
+		var seen []int
+		pt.WalkChildren(100, func(pid int) { seen = append(seen, pid) })
+		sort.Ints(seen)
+		assert.Equal(t, []int{101, 102, 103}, seen)
 	})
 }
 

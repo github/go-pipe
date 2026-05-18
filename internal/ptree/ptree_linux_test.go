@@ -1,16 +1,13 @@
 package ptree_test
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/github/go-pipe/internal/ptree"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,41 +49,6 @@ func TestGetProcessTreeRSS(t *testing.T) {
 	// return memory to the OS between our measurements. Allow this to happen
 	// once at most just to reduce the risk of flakiness.
 	require.LessOrEqual(t, less, 1)
-}
-
-func TestWalkChildren(t *testing.T) {
-	const depth = 5
-
-	arg := "echo ready; read -r x;"
-	for i := 0; i < depth; i++ {
-		arg = fmt.Sprintf("sh -c %q", arg)
-	}
-
-	cmd := exec.Command("sh", "-c", arg)
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	stdout, err := cmd.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
-
-	// Wait for the process to start by reading the expected output from the
-	// innermost child.
-	var ready [5]byte
-	_, err = stdout.Read(ready[:])
-	require.NoError(t, err, "process didn't appear to start successfully")
-	require.Equal(t, "ready", string(ready[:]))
-
-	var numChildren int
-	ptree.WalkChildren(cmd.Process.Pid, func(_ int) {
-		numChildren++
-	})
-	assert.Equal(t, depth, numChildren)
-
-	// Gracefully exit the process tree.
-	_, err = stdin.Write([]byte("\n"))
-	require.NoError(t, err)
-	require.NoError(t, stdin.Close())
-	require.NoError(t, cmd.Wait())
 }
 
 func allPids(t *testing.T) []int {
