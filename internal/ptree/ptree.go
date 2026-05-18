@@ -2,7 +2,7 @@
 package ptree
 
 import (
-	"bufio"
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -29,7 +29,7 @@ func NewProcessTree(path string) ProcessTree {
 // Return the RSSAnon of a single process `pid`.
 func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
 	status := pt.path + "/" + strconv.Itoa(pid) + "/status"
-	f, err := os.Open(status)
+	data, err := os.ReadFile(status)
 	if os.IsNotExist(err) {
 		// process is already gone
 		return 0, nil
@@ -37,17 +37,23 @@ func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
 
-	scan := bufio.NewScanner(f)
-	for scan.Scan() {
-		line := scan.Text()
-		if rss, ok := ParseRSSAnon(line); ok {
+	prefix := []byte("RssAnon:")
+	rest := data
+	for len(rest) > 0 {
+		var line []byte
+		if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+			line, rest = rest[:nl], rest[nl+1:]
+		} else {
+			line, rest = rest, nil
+		}
+		// Fast prefix check before paying for the string conversion.
+		if !bytes.HasPrefix(line, prefix) {
+			continue
+		}
+		if rss, ok := ParseRSSAnon(string(line)); ok {
 			return rss, nil
 		}
-	}
-	if scan.Err() != nil {
-		return 0, scan.Err()
 	}
 	return 0, errNoRss
 }
