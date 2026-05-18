@@ -193,16 +193,28 @@ func TestParseRss(t *testing.T) {
 			result: 15032 * kb,
 		},
 		{
-			input:  "RssAnon:\t   15032 kB\n",
-			result: 15032 * kb,
-		},
-		{
 			input:  "RssAnon:\t99915032 kB",
 			result: 99915032 * kb,
 		},
 		{
 			input:  "RssAnon:\t       1 kB",
 			result: kb,
+		},
+		// Exactly what the kernel emits via SEQ_PUT_DEC: "RssAnon:\t" +
+		// 8-wide right-justified decimal + " kB\n". See fs/proc/task_mmu.c
+		// (task_mem). The trailing newline must be tolerated.
+		{
+			input:  "RssAnon:\t   15032 kB\n",
+			result: 15032 * kb,
+		},
+		// A value wider than the 8-char padding (no leading spaces).
+		{
+			input:  "RssAnon:\t12345678 kB\n",
+			result: 12345678 * kb,
+		},
+		{
+			input:  "RssAnon:\t       0 kB\n",
+			result: 0,
 		},
 	}
 

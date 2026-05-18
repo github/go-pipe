@@ -6,15 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
 
-var (
-	errNoRss  = errors.New("RssAnon was not found")
-	rssAnonRE = regexp.MustCompile(`^RssAnon:\s*(\d+)\s+kB($|\s)`)
-)
+var errNoRss = errors.New("RssAnon was not found")
 
 type ProcessTree struct {
 	path string
@@ -127,13 +123,57 @@ func (pt ProcessTree) walkChildrenFile(filename string, walkFn func(int), visite
 // line looks like "RssAnon: 1234 kB", the byte size will be returned. If the
 // line isn't parseable, (0, false) will be returned.
 func ParseRSSAnon(s string) (uint64, bool) {
-	m := rssAnonRE.FindStringSubmatch(s)
-	if m == nil {
+	const prefix = "RssAnon:"
+	if !strings.HasPrefix(s, prefix) {
 		return 0, false
 	}
-	kb, err := strconv.ParseUint(m[1], 10, 64)
+	s = s[len(prefix):]
+
+	// Optional whitespace before the number.
+	i := 0
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+
+	// One or more digits.
+	digitsStart := i
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == digitsStart {
+		return 0, false
+	}
+	kb, err := strconv.ParseUint(s[digitsStart:i], 10, 64)
 	if err != nil {
 		return 0, false
 	}
+
+	// At least one whitespace between the number and "kB".
+	if i >= len(s) || !isASCIISpace(s[i]) {
+		return 0, false
+	}
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+
+	// Literal "kB", then either end-of-string or whitespace.
+	const unit = "kB"
+	if !strings.HasPrefix(s[i:], unit) {
+		return 0, false
+	}
+	i += len(unit)
+	if i < len(s) && !isASCIISpace(s[i]) {
+		return 0, false
+	}
 	return kb * 1024, true
+}
+
+// isASCIISpace matches the character class that Go's regexp engine uses for
+// \s in non-Unicode mode: [\t\n\f\r ].
+func isASCIISpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\f', '\r':
+		return true
+	}
+	return false
 }
