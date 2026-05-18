@@ -15,7 +15,7 @@ import (
 
 // writeStatus creates only what GetProcessRSSAnon reads: <root>/<pid>/status.
 // If rssKB is zero, the RssAnon line is omitted (mimicking kernel threads).
-func writeStatus(t *testing.T, root string, pid int, rssKB uint64) {
+func writeStatus(t testing.TB, root string, pid int, rssKB uint64) {
 	t.Helper()
 	pidDir := filepath.Join(root, strconv.Itoa(pid))
 	require.NoError(t, os.MkdirAll(pidDir, 0o755))
@@ -32,7 +32,7 @@ func writeStatus(t *testing.T, root string, pid int, rssKB uint64) {
 // space-separated child pids. Only call this for processes that actually
 // have children; getProcessTreeRSSAnon copes fine with the task/ directory
 // being absent for leaves.
-func writeChildren(t *testing.T, root string, pid int, children []int) {
+func writeChildren(t testing.TB, root string, pid int, children []int) {
 	t.Helper()
 	taskDir := filepath.Join(root, strconv.Itoa(pid), "task", strconv.Itoa(pid))
 	require.NoError(t, os.MkdirAll(taskDir, 0o755))
@@ -113,6 +113,30 @@ func TestGetProcessTreeRSSAnon(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), total)
 	})
+}
+
+// BenchmarkGetProcessTreeRSSAnon measures the cost of a single poll over a
+// small process tree (a root plus a few direct children).
+func BenchmarkGetProcessTreeRSSAnon(b *testing.B) {
+	const rootPid = 100
+	root := b.TempDir()
+	writeStatus(b, root, rootPid, 1000)
+	children := []int{101, 102, 103}
+	writeChildren(b, root, rootPid, children)
+	for _, c := range children {
+		writeStatus(b, root, c, 200)
+	}
+
+	pt := ptree.NewProcessTree(root)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := pt.GetProcessTreeRSSAnon(rootPid)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func TestParseRss(t *testing.T) {
