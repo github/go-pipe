@@ -188,15 +188,40 @@ func (pt ProcessTree) walkChildrenFile(filename string, walkFn func(int), visite
 	}
 	defer readBufPool.Put(bufPtr)
 
-	for _, pidStr := range strings.Fields(string(data)) {
-		pid, err := strconv.Atoi(pidStr)
-		if err != nil {
+	// children is a whitespace-separated list of decimal PIDs. Parse it in
+	// place to avoid the string(data) conversion and the []string allocated
+	// by strings.Fields.
+	i := 0
+	for i < len(data) {
+		for i < len(data) && isASCIISpace(data[i]) {
+			i++
+		}
+		if i >= len(data) {
+			return
+		}
+		pid := 0
+		start := i
+		for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+			pid = pid*10 + int(data[i]-'0')
+			i++
+		}
+		if i == start {
+			// Not a digit; skip until next whitespace to stay in sync.
+			for i < len(data) && !isASCIISpace(data[i]) {
+				i++
+			}
+			continue
+		}
+		if i-start > 10 {
+			// Realistic Linux PIDs fit in well under 10 digits
+			// (PID_MAX is 2^22). A longer digit run can't be a
+			// real PID and would risk silently overflowing the
+			// int accumulator, so skip it.
 			continue
 		}
 		if visited[pid] {
 			continue
 		}
-
 		walkFn(pid)
 		visited[pid] = true
 		pt.walkChildPids(pid, walkFn, visited)
