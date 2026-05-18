@@ -1,9 +1,7 @@
 package ptree
 
-import "os"
-
 var DefaultProcessTree = ProcessTree{
-	procfs: os.DirFS("/proc"),
+	path: "/proc",
 }
 
 // Walk the child processes of the specified root process. walkFn will be called

@@ -5,8 +5,8 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,19 +18,19 @@ var (
 )
 
 type ProcessTree struct {
-	procfs fs.FS
+	path string
 }
 
 func NewProcessTree(path string) ProcessTree {
 	return ProcessTree{
-		procfs: os.DirFS(path),
+		path: path,
 	}
 }
 
 // Return the RSSAnon of a single process `pid`.
 func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
-	status := fmt.Sprintf("%d/status", pid)
-	f, err := pt.procfs.Open(status)
+	status := filepath.Join(pt.path, fmt.Sprintf("%d/status", pid))
+	f, err := os.Open(status)
 	if os.IsNotExist(err) {
 		// process is already gone
 		return 0, nil
@@ -86,7 +86,7 @@ func (pt ProcessTree) WalkChildren(pid int, walkFn func(int)) {
 }
 
 func (pt ProcessTree) walkChildPids(pid int, walkFn func(int), visited map[int]bool) {
-	matches, err := fs.Glob(pt.procfs, fmt.Sprintf("%d/task/*/children", pid))
+	matches, err := filepath.Glob(filepath.Join(pt.path, fmt.Sprintf("%d/task/*/children", pid)))
 	if err != nil {
 		return
 	}
@@ -97,7 +97,7 @@ func (pt ProcessTree) walkChildPids(pid int, walkFn func(int), visited map[int]b
 }
 
 func (pt ProcessTree) walkChildrenFile(filename string, walkFn func(int), visited map[int]bool) {
-	data, err := fs.ReadFile(pt.procfs, filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return
 	}
