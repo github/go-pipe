@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -87,13 +86,25 @@ func (pt ProcessTree) WalkChildren(pid int, walkFn func(int)) {
 }
 
 func (pt ProcessTree) walkChildPids(pid int, walkFn func(int), visited map[int]bool) {
-	matches, err := filepath.Glob(pt.path + "/" + strconv.Itoa(pid) + "/task/*/children")
+	// List the per-thread directories under /proc/<pid>/task and read each
+	// task's "children" file directly. This avoids filepath.Glob, which
+	// would Stat every match on top of the readdir we already need.
+	taskDir := pt.path + "/" + strconv.Itoa(pid) + "/task"
+	entries, err := os.ReadDir(taskDir)
 	if err != nil {
 		return
 	}
 
-	for _, filename := range matches {
-		pt.walkChildrenFile(filename, walkFn, visited)
+	for _, entry := range entries {
+		// task/ should only contain numeric TID directories. Skip
+		// anything else defensively; this mirrors the implicit
+		// filtering that filepath.Glob("*/children") provided.
+		// A byte-range check avoids the error allocation that
+		// strconv.Atoi would incur for non-numeric names.
+		if !isAllDigits(entry.Name()) {
+			continue
+		}
+		pt.walkChildrenFile(taskDir+"/"+entry.Name()+"/children", walkFn, visited)
 	}
 }
 
@@ -176,4 +187,18 @@ func isASCIISpace(b byte) bool {
 		return true
 	}
 	return false
+}
+
+// isAllDigits reports whether s is non-empty and consists entirely of ASCII
+// decimal digits. Used as a cheap allocation-free numeric-name filter.
+func isAllDigits(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
