@@ -1,6 +1,7 @@
 package ptree_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,21 @@ func writeStatus(t *testing.T, root string, pid int, rssKB uint64) {
 		status = "Name:\tfake\nVmSize:\t1000 kB\n"
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(pidDir, "status"), []byte(status), 0o600))
+}
+
+// writeChildren creates <root>/<pid>/task/<pid>/children containing the
+// space-separated child pids. Only call this for processes that actually
+// have children; getProcessTreeRSSAnon copes fine with the task/ directory
+// being absent for leaves.
+func writeChildren(t *testing.T, root string, pid int, children []int) {
+	t.Helper()
+	taskDir := filepath.Join(root, strconv.Itoa(pid), "task", strconv.Itoa(pid))
+	require.NoError(t, os.MkdirAll(taskDir, 0o755))
+	var buf bytes.Buffer
+	for _, c := range children {
+		fmt.Fprintf(&buf, "%d ", c)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(taskDir, "children"), buf.Bytes(), 0o600))
 }
 
 func TestGetProcessRSSAnon(t *testing.T) {
@@ -52,6 +68,50 @@ func TestGetProcessRSSAnon(t *testing.T) {
 		rss, err := pt.GetProcessRSSAnon(999)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), rss)
+	})
+}
+
+func TestGetProcessTreeRSSAnon(t *testing.T) {
+	const kb = 1024
+
+	t.Run("leaf process returns its own RssAnon", func(t *testing.T) {
+		root := t.TempDir()
+		writeStatus(t, root, 100, 1000)
+
+		pt := ptree.NewProcessTree(root)
+
+		total, err := pt.GetProcessTreeRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1000*kb), total)
+	})
+
+	t.Run("sums root and descendants", func(t *testing.T) {
+		// 100 -> {101 -> 103, 102}
+		root := t.TempDir()
+		writeStatus(t, root, 100, 1000)
+		writeStatus(t, root, 101, 200)
+		writeStatus(t, root, 102, 50)
+		writeStatus(t, root, 103, 7)
+		writeChildren(t, root, 100, []int{101, 102})
+		writeChildren(t, root, 101, []int{103})
+
+		pt := ptree.NewProcessTree(root)
+
+		total, err := pt.GetProcessTreeRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64((1000+200+50+7)*kb), total)
+	})
+
+	t.Run("kernel-thread root returns (0, nil)", func(t *testing.T) {
+		// Root has no RssAnon line; the function maps errNoRss to (0, nil).
+		root := t.TempDir()
+		writeStatus(t, root, 100, 0)
+
+		pt := ptree.NewProcessTree(root)
+
+		total, err := pt.GetProcessTreeRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), total)
 	})
 }
 
