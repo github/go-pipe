@@ -1,5 +1,3 @@
-//go:build linux
-
 // Package ptree contains utilities for dealing with Linux process trees.
 package ptree
 
@@ -16,14 +14,23 @@ import (
 
 var (
 	errNoRss  = errors.New("RssAnon was not found")
-	procfs    = os.DirFS("/proc")
 	rssAnonRE = regexp.MustCompile(`^RssAnon:\s*(\d+)\s+kB($|\s)`)
 )
 
+type ProcessTree struct {
+	procfs fs.FS
+}
+
+func NewProcessTree(path string) ProcessTree {
+	return ProcessTree{
+		procfs: os.DirFS(path),
+	}
+}
+
 // Return the RSSAnon of a single process `pid`.
-func GetProcessRSSAnon(pid int) (uint64, error) {
+func (pt ProcessTree) GetProcessRSSAnon(pid int) (uint64, error) {
 	status := fmt.Sprintf("%d/status", pid)
-	f, err := procfs.Open(status)
+	f, err := pt.procfs.Open(status)
 	if os.IsNotExist(err) {
 		// process is already gone
 		return 0, nil
@@ -53,8 +60,8 @@ func GetProcessRSSAnon(pid int) (uint64, error) {
 //
 // Errors encountered while walking the children are ignored, since it can
 // change while traversing it.
-func GetProcessTreeRSSAnon(pid int) (uint64, error) {
-	total, err := GetProcessRSSAnon(pid)
+func (pt ProcessTree) GetProcessTreeRSSAnon(pid int) (uint64, error) {
+	total, err := pt.GetProcessRSSAnon(pid)
 	if err != nil {
 		if err == errNoRss {
 			// these are typically kernel threads, which don't have an address space to measure
@@ -63,8 +70,8 @@ func GetProcessTreeRSSAnon(pid int) (uint64, error) {
 		return 0, err
 	}
 
-	WalkChildren(pid, func(pid int) {
-		mem, err := GetProcessRSSAnon(pid)
+	pt.WalkChildren(pid, func(pid int) {
+		mem, err := pt.GetProcessRSSAnon(pid)
 		if err != nil {
 			return
 		}
@@ -74,27 +81,23 @@ func GetProcessTreeRSSAnon(pid int) (uint64, error) {
 	return total, nil
 }
 
-// Walk the child processes of the specified root process. walkFn will be called
-// for each child found. It will not be called for the root process. Any errors
-// will be ignored, since they may be just a consequence of the process tree
-// changing during traversal.
-func WalkChildren(pid int, walkFn func(int)) {
-	walkChildPids(pid, walkFn, map[int]bool{pid: true})
+func (pt ProcessTree) WalkChildren(pid int, walkFn func(int)) {
+	pt.walkChildPids(pid, walkFn, map[int]bool{pid: true})
 }
 
-func walkChildPids(pid int, walkFn func(int), visited map[int]bool) {
-	matches, err := fs.Glob(procfs, fmt.Sprintf("%d/task/*/children", pid))
+func (pt ProcessTree) walkChildPids(pid int, walkFn func(int), visited map[int]bool) {
+	matches, err := fs.Glob(pt.procfs, fmt.Sprintf("%d/task/*/children", pid))
 	if err != nil {
 		return
 	}
 
 	for _, filename := range matches {
-		walkChildrenFile(filename, walkFn, visited)
+		pt.walkChildrenFile(filename, walkFn, visited)
 	}
 }
 
-func walkChildrenFile(filename string, walkFn func(int), visited map[int]bool) {
-	data, err := fs.ReadFile(procfs, filename)
+func (pt ProcessTree) walkChildrenFile(filename string, walkFn func(int), visited map[int]bool) {
+	data, err := fs.ReadFile(pt.procfs, filename)
 	if err != nil {
 		return
 	}
@@ -110,7 +113,7 @@ func walkChildrenFile(filename string, walkFn func(int), visited map[int]bool) {
 
 		walkFn(pid)
 		visited[pid] = true
-		walkChildPids(pid, walkFn, visited)
+		pt.walkChildPids(pid, walkFn, visited)
 	}
 }
 
