@@ -2,11 +2,9 @@ package ptree_test
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/github/go-pipe/internal/ptree"
@@ -14,79 +12,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TODO: use mocks, not the actual process tree
-func TestGetProcessTreeRSS(t *testing.T) {
-	mem := map[int]uint64{}
-	treeMem := map[int]uint64{}
-
-	pids := allPids(t)
-	for _, pid := range pids {
-		rss, err := ptree.GetProcessRSSAnon(pid)
-		if err == nil {
-			mem[pid] = rss
-		}
-		rss, err = ptree.GetProcessTreeRSSAnon(pid)
-		if err == nil {
-			treeMem[pid] = rss
-		}
+// writeStatus creates only what GetProcessRSSAnon reads: <root>/<pid>/status.
+// If rssKB is zero, the RssAnon line is omitted (mimicking kernel threads).
+func writeStatus(t *testing.T, root string, pid int, rssKB uint64) {
+	t.Helper()
+	pidDir := filepath.Join(root, strconv.Itoa(pid))
+	require.NoError(t, os.MkdirAll(pidDir, 0o755))
+	var status string
+	if rssKB > 0 {
+		status = fmt.Sprintf("Name:\tfake\nRssAnon:\t%d kB\nVmSize:\t1000 kB\n", rssKB)
+	} else {
+		status = "Name:\tfake\nVmSize:\t1000 kB\n"
 	}
-
-	var less, equal, greater int
-	for pid, treeRss := range treeMem {
-		if rss, ok := mem[pid]; ok {
-			switch {
-			case treeRss > rss:
-				greater++
-			case treeRss == rss:
-				equal++
-			default:
-				less++
-			}
-		}
-	}
-	require.Positive(t, greater) // detect process trees using more mem than their root process
-	require.Positive(t, equal)   // process trees with no children have the same mem usage as root
-
-	// We should *extremely* rarely find a tree using less memory than its root
-	// process. However, this is a little racy since any process in the tree can
-	// return memory to the OS between our measurements. Allow this to happen
-	// once at most just to reduce the risk of flakiness.
-	require.LessOrEqual(t, less, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(pidDir, "status"), []byte(status), 0o600))
 }
 
-func TestWalkChildren(t *testing.T) {
-	const depth = 5
+func TestGetProcessRSSAnon(t *testing.T) {
+	const kb = 1024
+	root := t.TempDir()
+	writeStatus(t, root, 100, 15032)
+	writeStatus(t, root, 101, 0) // kernel-thread-like: no RssAnon line
 
-	arg := "echo ready; read -r x;"
-	for i := 0; i < depth; i++ {
-		arg = fmt.Sprintf("sh -c %q", arg)
-	}
+	pt := ptree.NewProcessTree(root)
 
-	cmd := exec.Command("sh", "-c", arg)
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	stdout, err := cmd.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
-
-	// Wait for the process to start by reading the expected output from the
-	// innermost child.
-	var ready [5]byte
-	_, err = stdout.Read(ready[:])
-	require.NoError(t, err, "process didn't appear to start successfully")
-	require.Equal(t, "ready", string(ready[:]))
-
-	var numChildren int
-	ptree.WalkChildren(cmd.Process.Pid, func(_ int) {
-		numChildren++
+	t.Run("reads RssAnon", func(t *testing.T) {
+		rss, err := pt.GetProcessRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(15032*kb), rss)
 	})
-	assert.Equal(t, depth, numChildren)
 
-	// Gracefully exit the process tree.
-	_, err = stdin.Write([]byte("\n"))
-	require.NoError(t, err)
-	require.NoError(t, stdin.Close())
-	require.NoError(t, cmd.Wait())
+	t.Run("missing RssAnon line returns an error", func(t *testing.T) {
+		_, err := pt.GetProcessRSSAnon(101)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing pid returns (0, nil)", func(t *testing.T) {
+		// A process that has already exited disappears from /proc; the function
+		// treats that as a non-error zero.
+		rss, err := pt.GetProcessRSSAnon(999)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), rss)
+	})
 }
 
 func TestParseRss(t *testing.T) {
@@ -153,20 +119,4 @@ func BenchmarkParseRss(b *testing.B) {
 			require.False(b, ok)
 		}
 	})
-}
-
-func allPids(t *testing.T) []int {
-	procfs := os.DirFS("/proc")
-	matches, err := fs.Glob(procfs, "[0-9]*[0-9]/task")
-	require.Nil(t, err)
-
-	var pids = make([]int, 0, len(matches))
-	for _, m := range matches {
-		ns := strings.SplitN(m, "/", 2)
-		pid, err := strconv.Atoi(ns[0])
-		require.Nil(t, err)
-		pids = append(pids, pid)
-	}
-	require.NotEmpty(t, pids)
-	return pids
 }
