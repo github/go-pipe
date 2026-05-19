@@ -1,12 +1,12 @@
 package ptree_test
 
 import (
+	"bytes"
 	"fmt"
-	"io/fs"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/github/go-pipe/internal/ptree"
@@ -14,79 +14,171 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TODO: use mocks, not the actual process tree
-func TestGetProcessTreeRSS(t *testing.T) {
-	mem := map[int]uint64{}
-	treeMem := map[int]uint64{}
-
-	pids := allPids(t)
-	for _, pid := range pids {
-		rss, err := ptree.GetProcessRSSAnon(pid)
-		if err == nil {
-			mem[pid] = rss
-		}
-		rss, err = ptree.GetProcessTreeRSSAnon(pid)
-		if err == nil {
-			treeMem[pid] = rss
-		}
+// writeStatus creates only what GetProcessRSSAnon reads: <root>/<pid>/status.
+// If rssKB is zero, the RssAnon line is omitted (mimicking kernel threads).
+func writeStatus(t testing.TB, root string, pid int, rssKB uint64) {
+	t.Helper()
+	pidDir := filepath.Join(root, strconv.Itoa(pid))
+	require.NoError(t, os.MkdirAll(pidDir, 0o755))
+	var status string
+	if rssKB > 0 {
+		status = fmt.Sprintf("Name:\tfake\nRssAnon:\t%d kB\nVmSize:\t1000 kB\n", rssKB)
+	} else {
+		status = "Name:\tfake\nVmSize:\t1000 kB\n"
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(pidDir, "status"), []byte(status), 0o600))
+}
 
-	var less, equal, greater int
-	for pid, treeRss := range treeMem {
-		if rss, ok := mem[pid]; ok {
-			switch {
-			case treeRss > rss:
-				greater++
-			case treeRss == rss:
-				equal++
-			default:
-				less++
-			}
-		}
+// writeChildren creates <root>/<pid>/task/<pid>/children containing the
+// space-separated child pids. Only call this for processes that actually
+// have children; getProcessTreeRSSAnon copes fine with the task/ directory
+// being absent for leaves.
+func writeChildren(t testing.TB, root string, pid int, children []int) {
+	t.Helper()
+	writeThreadChildren(t, root, pid, pid, children)
+}
+
+// writeThreadChildren creates <root>/<pid>/task/<tid>/children for a specific
+// thread id, so tests can exercise multi-threaded processes.
+func writeThreadChildren(t testing.TB, root string, pid, tid int, children []int) {
+	t.Helper()
+	taskDir := filepath.Join(root, strconv.Itoa(pid), "task", strconv.Itoa(tid))
+	require.NoError(t, os.MkdirAll(taskDir, 0o755))
+	var buf bytes.Buffer
+	for _, c := range children {
+		fmt.Fprintf(&buf, "%d ", c)
 	}
-	require.Positive(t, greater) // detect process trees using more mem than their root process
-	require.Positive(t, equal)   // process trees with no children have the same mem usage as root
+	require.NoError(t, os.WriteFile(filepath.Join(taskDir, "children"), buf.Bytes(), 0o600))
+}
 
-	// We should *extremely* rarely find a tree using less memory than its root
-	// process. However, this is a little racy since any process in the tree can
-	// return memory to the OS between our measurements. Allow this to happen
-	// once at most just to reduce the risk of flakiness.
-	require.LessOrEqual(t, less, 1)
+func TestGetProcessRSSAnon(t *testing.T) {
+	const kb = 1024
+	root := t.TempDir()
+	writeStatus(t, root, 100, 15032)
+	writeStatus(t, root, 101, 0) // kernel-thread-like: no RssAnon line
+
+	pt := ptree.NewProcessTree(root)
+
+	t.Run("reads RssAnon", func(t *testing.T) {
+		rss, err := pt.GetProcessRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(15032*kb), rss)
+	})
+
+	t.Run("missing RssAnon line returns an error", func(t *testing.T) {
+		_, err := pt.GetProcessRSSAnon(101)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing pid returns (0, nil)", func(t *testing.T) {
+		// A process that has already exited disappears from /proc; the function
+		// treats that as a non-error zero.
+		rss, err := pt.GetProcessRSSAnon(999)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), rss)
+	})
+}
+
+func TestGetProcessTreeRSSAnon(t *testing.T) {
+	const kb = 1024
+
+	t.Run("leaf process returns its own RssAnon", func(t *testing.T) {
+		root := t.TempDir()
+		writeStatus(t, root, 100, 1000)
+
+		pt := ptree.NewProcessTree(root)
+
+		total, err := pt.GetProcessTreeRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1000*kb), total)
+	})
+
+	t.Run("sums root and descendants", func(t *testing.T) {
+		// 100 -> {101 -> 103, 102}
+		root := t.TempDir()
+		writeStatus(t, root, 100, 1000)
+		writeStatus(t, root, 101, 200)
+		writeStatus(t, root, 102, 50)
+		writeStatus(t, root, 103, 7)
+		writeChildren(t, root, 100, []int{101, 102})
+		writeChildren(t, root, 101, []int{103})
+
+		pt := ptree.NewProcessTree(root)
+
+		total, err := pt.GetProcessTreeRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64((1000+200+50+7)*kb), total)
+	})
+
+	t.Run("kernel-thread root returns (0, nil)", func(t *testing.T) {
+		// Root has no RssAnon line; the function maps errNoRss to (0, nil).
+		root := t.TempDir()
+		writeStatus(t, root, 100, 0)
+
+		pt := ptree.NewProcessTree(root)
+
+		total, err := pt.GetProcessTreeRSSAnon(100)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), total)
+	})
 }
 
 func TestWalkChildren(t *testing.T) {
-	const depth = 5
+	t.Run("walks all descendants", func(t *testing.T) {
+		// 100 -> {101, 102 -> 103}. Verifies the callback fires for
+		// every descendant (not just direct children) and is not
+		// invoked for the root.
+		root := t.TempDir()
+		writeChildren(t, root, 100, []int{101, 102})
+		writeChildren(t, root, 102, []int{103})
 
-	arg := "echo ready; read -r x;"
-	for i := 0; i < depth; i++ {
-		arg = fmt.Sprintf("sh -c %q", arg)
+		pt := ptree.NewProcessTree(root)
+
+		var seen []int
+		pt.WalkChildren(100, func(pid int) { seen = append(seen, pid) })
+		sort.Ints(seen)
+		assert.Equal(t, []int{101, 102, 103}, seen)
+	})
+
+	t.Run("iterates every thread under task/ and dedups", func(t *testing.T) {
+		// 100 has two threads (100 and 200); each thread reports a
+		// different set of children, with 102 listed by both threads
+		// to exercise the visited dedup.
+		root := t.TempDir()
+		writeThreadChildren(t, root, 100, 100, []int{101, 102})
+		writeThreadChildren(t, root, 100, 200, []int{102, 103})
+
+		pt := ptree.NewProcessTree(root)
+
+		var seen []int
+		pt.WalkChildren(100, func(pid int) { seen = append(seen, pid) })
+		sort.Ints(seen)
+		assert.Equal(t, []int{101, 102, 103}, seen)
+	})
+}
+
+// BenchmarkGetProcessTreeRSSAnon measures the cost of a single poll over a
+// small process tree (a root plus a few direct children).
+func BenchmarkGetProcessTreeRSSAnon(b *testing.B) {
+	const rootPid = 100
+	root := b.TempDir()
+	writeStatus(b, root, rootPid, 1000)
+	children := []int{101, 102, 103}
+	writeChildren(b, root, rootPid, children)
+	for _, c := range children {
+		writeStatus(b, root, c, 200)
 	}
 
-	cmd := exec.Command("sh", "-c", arg)
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	stdout, err := cmd.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
+	pt := ptree.NewProcessTree(root)
 
-	// Wait for the process to start by reading the expected output from the
-	// innermost child.
-	var ready [5]byte
-	_, err = stdout.Read(ready[:])
-	require.NoError(t, err, "process didn't appear to start successfully")
-	require.Equal(t, "ready", string(ready[:]))
-
-	var numChildren int
-	ptree.WalkChildren(cmd.Process.Pid, func(_ int) {
-		numChildren++
-	})
-	assert.Equal(t, depth, numChildren)
-
-	// Gracefully exit the process tree.
-	_, err = stdin.Write([]byte("\n"))
-	require.NoError(t, err)
-	require.NoError(t, stdin.Close())
-	require.NoError(t, cmd.Wait())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := pt.GetProcessTreeRSSAnon(rootPid)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func TestParseRss(t *testing.T) {
@@ -101,16 +193,28 @@ func TestParseRss(t *testing.T) {
 			result: 15032 * kb,
 		},
 		{
-			input:  "RssAnon:\t   15032 kB\n",
-			result: 15032 * kb,
-		},
-		{
 			input:  "RssAnon:\t99915032 kB",
 			result: 99915032 * kb,
 		},
 		{
 			input:  "RssAnon:\t       1 kB",
 			result: kb,
+		},
+		// Exactly what the kernel emits via SEQ_PUT_DEC: "RssAnon:\t" +
+		// 8-wide right-justified decimal + " kB\n". See fs/proc/task_mmu.c
+		// (task_mem). The trailing newline must be tolerated.
+		{
+			input:  "RssAnon:\t   15032 kB\n",
+			result: 15032 * kb,
+		},
+		// A value wider than the 8-char padding (no leading spaces).
+		{
+			input:  "RssAnon:\t12345678 kB\n",
+			result: 12345678 * kb,
+		},
+		{
+			input:  "RssAnon:\t       0 kB\n",
+			result: 0,
 		},
 	}
 
@@ -153,20 +257,4 @@ func BenchmarkParseRss(b *testing.B) {
 			require.False(b, ok)
 		}
 	})
-}
-
-func allPids(t *testing.T) []int {
-	procfs := os.DirFS("/proc")
-	matches, err := fs.Glob(procfs, "[0-9]*[0-9]/task")
-	require.Nil(t, err)
-
-	var pids = make([]int, 0, len(matches))
-	for _, m := range matches {
-		ns := strings.SplitN(m, "/", 2)
-		pid, err := strconv.Atoi(ns[0])
-		require.Nil(t, err)
-		pids = append(pids, pid)
-	}
-	require.NotEmpty(t, pids)
-	return pids
 }
