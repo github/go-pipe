@@ -129,9 +129,19 @@ func (s *commandStage) Start(
 		// explanation of this special case.
 		switch stdout := stdout.(type) {
 		case writerNopCloser:
-			// In this case, we shouldn't close it. But unwrap it for
-			// efficiency's sake:
-			s.cmd.Stdout = stdout.Writer
+			// We shouldn't close the wrapped writer. Unwrap it; if
+			// it's an `*os.File`, exec.Cmd can pass the fd directly
+			// to the child. Otherwise route the copy through our own
+			// pipe so we can use a pooled buffer.
+			if f, ok := stdout.Writer.(*os.File); ok {
+				s.cmd.Stdout = f
+			} else {
+				ec, err := s.setupPooledStdout(stdout.Writer)
+				if err != nil {
+					return err
+				}
+				earlyClosers = append(earlyClosers, ec)
+			}
 		case *os.File:
 			// In this case, we can close stdout as soon as the command
 			// has started:
@@ -139,8 +149,15 @@ func (s *commandStage) Start(
 			earlyClosers = append(earlyClosers, stdout)
 		default:
 			// In this case, we need to close `stdout`, but we should
-			// only do so after the command has finished:
-			s.cmd.Stdout = stdout
+			// only do so after the command has finished. We also
+			// route the copy through our own pipe so we can use a
+			// pooled buffer rather than letting exec.Cmd allocate a
+			// fresh 32KB buffer for its internal io.Copy.
+			ec, err := s.setupPooledStdout(stdout)
+			if err != nil {
+				return err
+			}
+			earlyClosers = append(earlyClosers, ec)
 			s.lateClosers = append(s.lateClosers, stdout)
 		}
 	}
@@ -294,4 +311,30 @@ func (s *commandStage) Wait() error {
 	}
 
 	return err
+}
+
+// setupPooledStdout creates an `os.Pipe()`, sets it as `cmd.Stdout`,
+// and starts a goroutine that copies from the read end to `dst` using
+// a pooled buffer (or `dst.ReadFrom` when `dst` implements it). The
+// returned closer is the write end of the pipe; the caller must add
+// it to `earlyClosers` so it is closed once the command has started.
+//
+// The buffer-pool optimization works for command stages whose stdout is
+// not an `*os.File`. Without it, `exec.Cmd` would set up its own pipe
+// and run `io.Copy` with a freshly allocated 32KB buffer per invocation.
+func (s *commandStage) setupPooledStdout(dst io.Writer) (io.Closer, error) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	s.cmd.Stdout = pw
+	s.wg.Go(func() error {
+		defer pr.Close()
+		_, err := pooledCopy(dst, pr)
+		if err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
+		return nil
+	})
+	return pw, nil
 }
