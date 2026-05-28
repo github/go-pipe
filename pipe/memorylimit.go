@@ -262,7 +262,10 @@ type memoryWatchStage struct {
 
 type memoryWatchFunc func(context.Context, LimitableStage)
 
-var _ LimitableStage = (*memoryWatchStage)(nil)
+var (
+	_ LimitableStage         = (*memoryWatchStage)(nil)
+	_ StagePanicHandlerAware = (*memoryWatchStage)(nil)
+)
 
 func (m *memoryWatchStage) Name() string {
 	return m.stage.Name() + m.nameSuffix
@@ -270,6 +273,20 @@ func (m *memoryWatchStage) Name() string {
 
 func (m *memoryWatchStage) Preferences() StagePreferences {
 	return m.stage.Preferences()
+}
+
+// SetPanicHandler forwards the handler to the wrapped stage if it
+// implements `StagePanicHandlerAware`. Without this, wrapping a
+// panicking stage in `MemoryLimit` / `MemoryObserver` /
+// `MemoryLimitWithObserver` would silently bypass
+// `WithStagePanicHandler` (the type assertion in `Pipeline.Start()`
+// only sees this wrapper's methods, not the wrapped stage's
+// `SetPanicHandler`), letting the panic propagate out of the
+// goroutine and crash the host process.
+func (m *memoryWatchStage) SetPanicHandler(ph StagePanicHandler) {
+	if phs, ok := m.stage.(StagePanicHandlerAware); ok {
+		phs.SetPanicHandler(ph)
+	}
 }
 
 func (m *memoryWatchStage) Start(

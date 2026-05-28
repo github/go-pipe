@@ -532,6 +532,35 @@ func TestFunction(t *testing.T) {
 		assert.ErrorContains(t, err, "panic handled")
 		assert.Empty(t, out)
 	})
+
+	t.Run("panic with handler through IgnoreError", func(t *testing.T) {
+		// Regression: efStage (the FilterError/IgnoreError wrapper)
+		// previously did not implement StagePanicHandlerAware, so
+		// the type assertion in Pipeline.Start() silently failed
+		// and the wrapped goStage never received the panic handler.
+		// The result was an unrecovered panic crashing the host.
+		p := pipe.New(
+			pipe.WithStagePanicHandler(func(p any) error {
+				return fmt.Errorf("panic handled: %v", p)
+			}),
+		)
+		p.Add(
+			pipe.Print("hello world"),
+			pipe.IgnoreError(
+				pipe.Function(
+					"farewell",
+					func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
+						panic("this is a panic")
+					},
+				),
+				func(_ error) bool { return false },
+			),
+		)
+
+		out, err := p.Output(ctx)
+		assert.ErrorContains(t, err, "panic handled")
+		assert.Empty(t, out)
+	})
 }
 
 func TestPipelineWithFunction(t *testing.T) {
