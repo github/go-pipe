@@ -5,7 +5,7 @@ package pipe
 import (
 	"context"
 
-	"github.com/github/go-pipe/internal/ptree"
+	"github.com/github/go-pipe/v2/internal/ptree"
 )
 
 // On linux, we can limit or observe memory usage in command stages.

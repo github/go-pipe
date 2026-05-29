@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/github/go-pipe/pipe"
+	"github.com/github/go-pipe/v2/pipe"
 )
 
 // Check whether this package's test suite leaks any goroutines:

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/github/go-pipe/internal/ptree"
+	"github.com/github/go-pipe/v2/internal/ptree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

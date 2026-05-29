@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/github/go-pipe/pipe"
+	"github.com/github/go-pipe/v2/pipe"
 	"github.com/stretchr/testify/assert"
 )
 

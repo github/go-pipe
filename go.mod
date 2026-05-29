@@ -1,4 +1,4 @@
-module github.com/github/go-pipe
+module github.com/github/go-pipe/v2
 
 go 1.24.0
 
