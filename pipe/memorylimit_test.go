@@ -210,7 +210,8 @@ func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (str
 				for i := 0; i < mbs; i++ {
 					_, err := stdout.Write(bytes[:])
 					if err != nil {
-						require.ErrorIs(t, err, syscall.EPIPE)
+						assert.ErrorIs(t, err, syscall.EPIPE)
+						return nil
 					}
 				}
 
@@ -244,7 +245,8 @@ func testMemoryLimitWithObserver(t *testing.T, mbs int, limit uint64, stage pipe
 				for i := 0; i < mbs; i++ {
 					_, err := stdout.Write(bytes[:])
 					if err != nil {
-						require.ErrorIs(t, err, syscall.EPIPE)
+						assert.ErrorIs(t, err, syscall.EPIPE)
+						return nil
 					}
 				}
 				return nil

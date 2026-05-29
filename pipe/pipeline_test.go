@@ -798,6 +798,26 @@ func TestPrintf(t *testing.T) {
 	}
 }
 
+func TestPrintlnNoOutput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := pipe.New()
+	p.Add(pipe.Println("Look Ma, no output!"))
+	assert.NoError(t, p.Run(ctx))
+}
+
+func TestFunctionNoInput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := pipe.New()
+	p.Add(pipe.Function("read-all", func(_ context.Context, _ pipe.Env, stdin io.Reader, _ io.Writer) error {
+		n, err := io.Copy(io.Discard, stdin)
+		assert.Equal(t, int64(0), n)
+		return err
+	}))
+	assert.NoError(t, p.Run(ctx))
+}
+
 func TestErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

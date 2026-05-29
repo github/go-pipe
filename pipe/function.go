@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // StageFunc is a function that can be used to power a `goStage`. It
@@ -66,10 +67,18 @@ func (s *goStage) Start(
 	if stdin, ok := stdin.(readerNopCloser); ok {
 		r = stdin.Reader
 	}
+	if r == nil {
+		// treat nil as empty input.
+		r = strings.NewReader("")
+	}
 
 	var w io.Writer = stdout
 	if stdout, ok := stdout.(writerNopCloser); ok {
 		w = stdout.Writer
+	}
+	if w == nil {
+		// treat nil output as /dev/null
+		w = io.Discard
 	}
 
 	go func() {
