@@ -98,7 +98,7 @@ func (s *pipeSniffingStage) Preferences() pipe.StagePreferences {
 }
 
 func (s *pipeSniffingStage) Start(
-	_ context.Context, _ pipe.Env, stdin io.ReadCloser, stdout io.WriteCloser,
+	_ context.Context, _ pipe.Env, stdin io.ReadCloser, stdout io.WriteCloser, _ pipe.StartOptions,
 ) error {
 	s.stdin = stdin
 	if stdin != nil {

@@ -100,13 +100,27 @@ type Stage interface {
 	//
 	// If `Start()` returns without an error, `Wait()` must also be
 	// called, to allow all resources to be freed.
-	Start(ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser) error
+	Start(ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions) error
 
 	// Wait waits for the stage to be done, either because it has
 	// finished or because it has been killed due to the expiration of
 	// the context passed to `Start()`.
 	Wait() error
 }
+
+// StartOptions carries run-scoped options passed to `Stage.Start`.
+// It is a struct (rather than positional parameters) so that future
+// options can be added without breaking the `Stage` interface.
+type StartOptions struct {
+	// PanicHandler, if non-nil, is invoked to recover a panic that
+	// escapes a Function stage's goroutine, converting it into an
+	// error. Stage types that don't run user code in a
+	// library-spawned goroutine ignore it.
+	PanicHandler StagePanicHandler
+}
+
+// StagePanicHandler is a function that handles panics in a pipeline's stages.
+type StagePanicHandler func(p any) error
 
 // StagePreferences is the way that a `Stage` indicates its
 // preferences about how it is run. This is used within

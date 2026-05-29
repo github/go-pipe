@@ -33,24 +33,16 @@ func Function(name string, f StageFunc) Stage {
 // goStage is a `Stage` that does its work by running an arbitrary
 // `stageFunc` in a goroutine.
 type goStage struct {
-	name         string
-	f            StageFunc
-	done         chan struct{}
-	err          error
-	panicHandler StagePanicHandler
+	name string
+	f    StageFunc
+	done chan struct{}
+	err  error
 }
 
-var (
-	_ Stage                  = (*goStage)(nil)
-	_ StagePanicHandlerAware = (*goStage)(nil)
-)
+var _ Stage = (*goStage)(nil)
 
 func (s *goStage) Name() string {
 	return s.name
-}
-
-func (s *goStage) SetPanicHandler(ph StagePanicHandler) {
-	s.panicHandler = ph
 }
 
 func (s *goStage) Preferences() StagePreferences {
@@ -61,7 +53,7 @@ func (s *goStage) Preferences() StagePreferences {
 }
 
 func (s *goStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions,
 ) error {
 	r := UnwrapReader(stdin)
 	if r == nil {
@@ -77,9 +69,9 @@ func (s *goStage) Start(
 
 	go func() {
 		defer func() {
-			if s.panicHandler != nil {
+			if opts.PanicHandler != nil {
 				if p := recover(); p != nil {
-					s.err = s.panicHandler(p)
+					s.err = opts.PanicHandler(p)
 				}
 			}
 			if stdout != nil {

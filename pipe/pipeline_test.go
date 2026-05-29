@@ -534,11 +534,6 @@ func TestFunction(t *testing.T) {
 	})
 
 	t.Run("panic with handler through IgnoreError", func(t *testing.T) {
-		// Regression: efStage (the FilterError/IgnoreError wrapper)
-		// previously did not implement StagePanicHandlerAware, so
-		// the type assertion in Pipeline.Start() silently failed
-		// and the wrapped goStage never received the panic handler.
-		// The result was an unrecovered panic crashing the host.
 		p := pipe.New(
 			pipe.WithStagePanicHandler(func(p any) error {
 				return fmt.Errorf("panic handled: %v", p)
@@ -607,7 +602,7 @@ func (s ErrorStartingStage) Preferences() pipe.StagePreferences {
 }
 
 func (s ErrorStartingStage) Start(
-	_ context.Context, _ pipe.Env, stdin io.ReadCloser, stdout io.WriteCloser,
+	_ context.Context, _ pipe.Env, stdin io.ReadCloser, stdout io.WriteCloser, _ pipe.StartOptions,
 ) error {
 	if stdin != nil {
 		_ = stdin.Close()

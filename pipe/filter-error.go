@@ -26,21 +26,6 @@ func (s efStage) Wait() error {
 	return s.filter(s.Stage.Wait())
 }
 
-// SetPanicHandler forwards the handler to the wrapped stage if it
-// implements `StagePanicHandlerAware`. Without this, wrapping a
-// panicking `Function` in `IgnoreError` / `FilterError` would
-// silently bypass `WithStagePanicHandler` (the type assertion in
-// `Pipeline.Start()` only sees this wrapper's methods, not the
-// embedded stage's `SetPanicHandler`), letting the panic propagate
-// out of the goroutine and crash the host process.
-func (s efStage) SetPanicHandler(ph StagePanicHandler) {
-	if phs, ok := s.Stage.(StagePanicHandlerAware); ok {
-		phs.SetPanicHandler(ph)
-	}
-}
-
-var _ StagePanicHandlerAware = efStage{}
-
 // ErrorMatcher decides whether its argument matches some class of
 // errors (e.g., errors that we want to ignore). The function will
 // only be invoked for non-nil errors.

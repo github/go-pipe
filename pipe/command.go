@@ -77,7 +77,7 @@ func (s *commandStage) Preferences() StagePreferences {
 }
 
 func (s *commandStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, _ StartOptions,
 ) error {
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = env.Dir

@@ -33,7 +33,7 @@ func TestKillWithFailedStart(t *testing.T) {
 
 	stage := Command("/this/path/does/not/exist/invalid_command_12345")
 
-	err := stage.Start(ctx, Env{}, nil, nil)
+	err := stage.Start(ctx, Env{}, nil, nil, StartOptions{})
 	if err == nil {
 		t.Fatal("Expected start to fail, but it succeeded")
 	}

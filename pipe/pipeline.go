@@ -348,10 +348,6 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		ss := &stageStarters[i]
 		nextSS := &stageStarters[i+1]
 
-		if phs, ok := s.(StagePanicHandlerAware); ok && p.panicHandler != nil {
-			phs.SetPanicHandler(p.panicHandler)
-		}
-
 		// We need to generate a pipe pair for this stage to use
 		// to communicate with its successor:
 		if ss.prefs.StdoutPreference == IOPreferenceFile ||
@@ -365,7 +361,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		} else {
 			nextSS.stdin, ss.stdout = io.Pipe()
 		}
-		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout); err != nil {
+		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, StartOptions{PanicHandler: p.panicHandler}); err != nil {
 			nextSS.stdin.Close()
 			ss.stdout.Close()
 			return abort(i, err)
@@ -380,11 +376,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		s := p.stages[i]
 		ss := &stageStarters[i]
 
-		if phs, ok := s.(StagePanicHandlerAware); ok && p.panicHandler != nil {
-			phs.SetPanicHandler(p.panicHandler)
-		}
-
-		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout); err != nil {
+		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, StartOptions{PanicHandler: p.panicHandler}); err != nil {
 			return abort(i, err)
 		}
 	}
