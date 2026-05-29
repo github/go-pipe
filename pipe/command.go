@@ -324,6 +324,7 @@ func (s *commandStage) closeLateClosers() error {
 			err = closeErr
 		}
 	}
+	s.lateClosers = nil
 	return err
 }
 
