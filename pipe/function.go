@@ -76,23 +76,24 @@ func (s *goStage) Start(
 	}
 
 	go func() {
-		defer close(s.done)
 		defer func() {
-			if stdin != nil {
-				if err := stdin.Close(); err != nil && s.err == nil {
-					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
+			if s.panicHandler != nil {
+				if p := recover(); p != nil {
+					s.err = s.panicHandler(p)
 				}
 			}
-		}()
-		defer func() {
 			if stdout != nil {
 				if err := stdout.Close(); err != nil && s.err == nil {
 					s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
 				}
 			}
+			if stdin != nil {
+				if err := stdin.Close(); err != nil && s.err == nil {
+					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
+				}
+			}
+			close(s.done)
 		}()
-		defer s.recoverPanic()
-
 		s.err = s.f(ctx, env, r, w)
 	}()
 
@@ -102,14 +103,4 @@ func (s *goStage) Start(
 func (s *goStage) Wait() error {
 	<-s.done
 	return s.err
-}
-
-func (s *goStage) recoverPanic() {
-	if s.panicHandler == nil {
-		return
-	}
-
-	if p := recover(); p != nil {
-		s.err = s.panicHandler(p)
-	}
 }
