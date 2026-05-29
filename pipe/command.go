@@ -70,18 +70,10 @@ func (s *commandStage) Name() string {
 }
 
 func (s *commandStage) Preferences() StagePreferences {
-	prefs := StagePreferences{
+	return StagePreferences{
 		StdinPreference:  IOPreferenceFile,
 		StdoutPreference: IOPreferenceFile,
 	}
-	if s.cmd.Stdin != nil {
-		prefs.StdinPreference = IOPreferenceNil
-	}
-	if s.cmd.Stdout != nil {
-		prefs.StdoutPreference = IOPreferenceNil
-	}
-
-	return prefs
 }
 
 func (s *commandStage) Start(

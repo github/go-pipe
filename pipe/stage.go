@@ -138,9 +138,4 @@ const (
 	// IOPreferenceFile indicates that the stage would prefer for the
 	// specified stdin / stdout to be an `*os.File`, to avoid copying.
 	IOPreferenceFile
-
-	// IOPreferenceNil indicates that the stage does not use the
-	// specified stdin / stdout, so `nil` should be passed in. This
-	// should only happen at the beginning / end of a pipeline.
-	IOPreferenceNil
 )
