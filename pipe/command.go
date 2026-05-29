@@ -162,6 +162,20 @@ func (s *commandStage) Start(
 		}
 	}
 
+	closeEarlyClosers := func() {
+		for _, closer := range earlyClosers {
+			_ = closer.Close()
+		}
+	}
+
+	// On error, Close any pipes we created and wait for the goroutines to
+	// exit before propagating the error.
+	cleanupOnStartFailure := func() {
+		closeEarlyClosers()
+		_ = s.wg.Wait()
+		_ = s.closeLateClosers()
+	}
+
 	// If the caller hasn't arranged otherwise, read the command's
 	// standard error into our `stderr` field:
 	if s.cmd.Stderr == nil {
@@ -171,6 +185,7 @@ func (s *commandStage) Start(
 		// can be sure.
 		p, err := s.cmd.StderrPipe()
 		if err != nil {
+			cleanupOnStartFailure()
 			return err
 		}
 		s.wg.Go(func() error {
@@ -188,12 +203,11 @@ func (s *commandStage) Start(
 	s.runInOwnProcessGroup()
 
 	if err := s.cmd.Start(); err != nil {
+		cleanupOnStartFailure()
 		return err
 	}
 
-	for _, closer := range earlyClosers {
-		_ = closer.Close()
-	}
+	closeEarlyClosers()
 
 	// Arrange for the process to be killed (gently) if the context
 	// expires before the command exits normally:
@@ -304,12 +318,20 @@ func (s *commandStage) Wait() error {
 		err = wgErr
 	}
 
+	if closeErr := s.closeLateClosers(); err == nil {
+		err = closeErr
+	}
+
+	return err
+}
+
+func (s *commandStage) closeLateClosers() error {
+	var err error
 	for _, closer := range s.lateClosers {
 		if closeErr := closer.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
 	}
-
 	return err
 }
 
