@@ -63,19 +63,13 @@ func (s *goStage) Preferences() StagePreferences {
 func (s *goStage) Start(
 	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
-	var r io.Reader = stdin
-	if stdin, ok := stdin.(readerNopCloser); ok {
-		r = stdin.Reader
-	}
+	r := UnwrapReader(stdin)
 	if r == nil {
 		// treat nil as empty input.
 		r = strings.NewReader("")
 	}
 
-	var w io.Writer = stdout
-	if stdout, ok := stdout.(writerNopCloser); ok {
-		w = stdout.Writer
-	}
+	w := UnwrapWriter(stdout)
 	if w == nil {
 		// treat nil output as /dev/null
 		w = io.Discard

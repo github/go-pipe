@@ -98,11 +98,7 @@ func (s *commandStage) Start(
 		case readerNopCloser:
 			// In this case, we shouldn't close it. But unwrap it for
 			// efficiency's sake:
-			s.cmd.Stdin = stdin.Reader
-		case readerWriterToNopCloser:
-			// In this case, we shouldn't close it. But unwrap it for
-			// efficiency's sake:
-			s.cmd.Stdin = stdin.Reader
+			s.cmd.Stdin = UnwrapReader(stdin)
 		case *os.File:
 			// In this case, we can close stdin as soon as the command
 			// has started:
@@ -125,10 +121,11 @@ func (s *commandStage) Start(
 			// it's an `*os.File`, exec.Cmd can pass the fd directly
 			// to the child. Otherwise route the copy through our own
 			// pipe so we can use a pooled buffer.
-			if f, ok := stdout.Writer.(*os.File); ok {
+			writer := UnwrapWriter(stdout)
+			if f, ok := writer.(*os.File); ok {
 				s.cmd.Stdout = f
 			} else {
-				ec, err := s.setupPooledStdout(stdout.Writer)
+				ec, err := s.setupPooledStdout(writer)
 				if err != nil {
 					return err
 				}

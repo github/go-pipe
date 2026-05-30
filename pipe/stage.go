@@ -66,10 +66,10 @@ import (
 // provided by the user (`WithStdin()`), then we don't want to close
 // it at all, whether it's an `*os.File` or not. For this reason,
 // stdin has to be wrapped using a `readerNopCloser` before being
-// passed into the first stage. For efficiency reasons, it's
-// advantageous for the first stage should ideally unwrap its stdin
-// argument before actually using it. If the wrapped value is an
-// `*os.File` and the stage is a command stage, then unwrapping is
+// passed into the first stage. For efficiency reasons, the first
+// stage should ideally unwrap its stdin argument (using
+// [UnwrapReader]) before actually using it. If the wrapped value is
+// an `*os.File` and the stage is a command stage, then unwrapping is
 // also important to get the right semantics.
 //
 // For stdout, it depends on whether the user supplied it using
