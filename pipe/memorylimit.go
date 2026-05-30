@@ -26,6 +26,11 @@ type LimitableStage interface {
 
 // MemoryLimit watches the memory usage of the stage and stops it if it
 // exceeds the given limit.
+//
+// If the event handler panics while reporting the over-limit event, the
+// stage is still killed. A panic in any other event-handler call (an
+// RSS-read error) is recovered via StartOptions.PanicHandler and the
+// stage keeps running unmonitored; see StartOptions.PanicHandler.
 func MemoryLimit(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Stage {
 
 	limitableStage, ok := stage.(LimitableStage)
@@ -73,16 +78,20 @@ func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc 
 				if rss < byteLimit {
 					continue
 				}
-				eventHandler(&Event{
-					Command: stage.Name(),
-					Msg:     "stage exceeded allowed memory use",
-					Err:     fmt.Errorf("stage exceeded allowed memory use"),
-					Context: map[string]interface{}{
-						"limit": byteLimit,
-						"used":  rss,
-					},
-				})
-				stage.Kill(ErrMemoryLimitExceeded)
+				func() {
+					// Guarantee the over-limit stage is killed even if
+					// the user's event handler panics.
+					defer stage.Kill(ErrMemoryLimitExceeded)
+					eventHandler(&Event{
+						Command: stage.Name(),
+						Msg:     "stage exceeded allowed memory use",
+						Err:     fmt.Errorf("stage exceeded allowed memory use"),
+						Context: map[string]interface{}{
+							"limit": byteLimit,
+							"used":  rss,
+						},
+					})
+				}()
 				return
 			}
 		}
@@ -93,6 +102,11 @@ func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc 
 // one goroutine. It watches the memory usage of the stage, stops it
 // if it exceeds the given limit, and logs the peak memory usage when
 // the stage exits.
+//
+// Its event-handler panic behavior matches MemoryLimit: the over-limit
+// kill always happens, while a panic in the RSS-error or peak-usage
+// handler is recovered via StartOptions.PanicHandler and the stage keeps
+// running unmonitored. See StartOptions.PanicHandler.
 func MemoryLimitWithObserver(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Stage {
 	limitableStage, ok := stage.(LimitableStage)
 	if !ok {
@@ -165,16 +179,20 @@ func killAtLimitAndObserve(byteLimit uint64, eventHandler func(e *Event)) memory
 				}
 
 				if rss >= byteLimit {
-					eventHandler(&Event{
-						Command: stage.Name(),
-						Msg:     "stage exceeded allowed memory use",
-						Err:     fmt.Errorf("stage exceeded allowed memory use"),
-						Context: map[string]interface{}{
-							"limit": byteLimit,
-							"used":  rss,
-						},
-					})
-					stage.Kill(ErrMemoryLimitExceeded)
+					func() {
+						// Guarantee the over-limit stage is killed even if
+						// the user's event handler panics.
+						defer stage.Kill(ErrMemoryLimitExceeded)
+						eventHandler(&Event{
+							Command: stage.Name(),
+							Msg:     "stage exceeded allowed memory use",
+							Err:     fmt.Errorf("stage exceeded allowed memory use"),
+							Context: map[string]interface{}{
+								"limit": byteLimit,
+								"used":  rss,
+							},
+						})
+					}()
 					killed = true
 				}
 			}
@@ -258,6 +276,7 @@ type memoryWatchStage struct {
 	watch      memoryWatchFunc
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	watchErr   error
 }
 
 type memoryWatchFunc func(context.Context, LimitableStage)
@@ -279,26 +298,40 @@ func (m *memoryWatchStage) Start(
 		return err
 	}
 
-	m.monitor(ctx)
+	m.monitor(ctx, opts.PanicHandler)
 
 	return nil
 }
 
-// monitor starts up a goroutine that monitors the memory of `m`.
-func (m *memoryWatchStage) monitor(ctx context.Context) {
+// monitor starts up a goroutine that monitors the memory of `m`. If
+// panicHandler is set, any panic that escapes the user-supplied event handler
+// (via m.watch) is recovered.
+func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicHandler) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 	m.wg.Add(1)
 
 	go func() {
+		defer m.wg.Done()
+		defer func() {
+			if p := recover(); p != nil {
+				if panicHandler == nil {
+					panic(p)
+				}
+				m.watchErr = panicHandler(p)
+			}
+		}()
 		m.watch(ctx, m.stage)
-		m.wg.Done()
 	}()
 }
 
 func (m *memoryWatchStage) Wait() error {
-	defer m.stopWatching()
-	return m.stage.Wait()
+	err := m.stage.Wait()
+	m.stopWatching()
+	if err == nil {
+		err = m.watchErr // non-nil if panicHandler() returned anything
+	}
+	return err
 }
 
 func (m *memoryWatchStage) GetRSSAnon(ctx context.Context) (uint64, error) {

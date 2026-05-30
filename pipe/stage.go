@@ -112,10 +112,11 @@ type Stage interface {
 // It is a struct (rather than positional parameters) so that future
 // options can be added without breaking the `Stage` interface.
 type StartOptions struct {
-	// PanicHandler, if non-nil, is invoked to recover a panic that
-	// escapes a Function stage's goroutine, converting it into an
-	// error. Stage types that don't run user code in a
-	// library-spawned goroutine ignore it.
+	// PanicHandler, if non-nil, is invoked to recover a panic that escapes
+	// user code that a stage runs in a library-spawned goroutine (a
+	// Function stage's StageFunc, or a memory-limit stage's event
+	// handler), converting it into an error. Stage types that don't run
+	// user code in a library-spawned goroutine ignore it.
 	PanicHandler StagePanicHandler
 }
 
