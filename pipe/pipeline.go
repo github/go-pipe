@@ -60,6 +60,8 @@ type Pipeline struct {
 	stages []Stage
 	cancel func()
 
+	leaveStdoutOpen bool // only matters when stdout is non-nil
+
 	// Atomically written and read value, nonzero if the pipeline has
 	// been started. This is only used for lifecycle sanity checks but
 	// does not guarantee that clients are using the class correctly.
@@ -152,6 +154,7 @@ func WithStdin(stdin io.Reader) Option {
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
 		p.stdout = writerNopCloser{stdout}
+		p.leaveStdoutOpen = true
 	}
 }
 
@@ -160,6 +163,7 @@ func WithStdout(stdout io.Writer) Option {
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return func(p *Pipeline) {
 		p.stdout = stdout
+		p.leaveStdoutOpen = false
 	}
 }
 
@@ -258,6 +262,19 @@ type stageStarter struct {
 	stdout io.WriteCloser
 }
 
+// startOptions builds the StartOptions for the stage at index i. It sets
+// LeaveStdinOpen/LeaveStdoutOpen for the first and last stages, as appropriate.
+func (p *Pipeline) startOptions(i int) StartOptions {
+	opts := StartOptions{PanicHandler: p.panicHandler}
+	if i == 0 && p.stdin != nil {
+		opts.LeaveStdinOpen = true
+	}
+	if i == len(p.stages)-1 && p.stdout != nil {
+		opts.LeaveStdoutOpen = p.leaveStdoutOpen
+	}
+	return opts
+}
+
 // Start starts the commands in the pipeline. If `Start()` exits
 // without an error, `Wait()` must also be called, to allow all
 // resources to be freed.
@@ -320,7 +337,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// Close the pipe that the previous stage was writing to.
 		// That should cause it to exit even if it's not minding
 		// its context.
-		if stageStarters[i].stdin != nil {
+		if stageStarters[i].stdin != nil && !p.startOptions(i).LeaveStdinOpen {
 			_ = stageStarters[i].stdin.Close()
 		}
 
@@ -361,7 +378,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		} else {
 			nextSS.stdin, ss.stdout = io.Pipe()
 		}
-		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, StartOptions{PanicHandler: p.panicHandler}); err != nil {
+		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, p.startOptions(i)); err != nil {
 			nextSS.stdin.Close()
 			ss.stdout.Close()
 			return abort(i, err)
@@ -376,7 +393,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		s := p.stages[i]
 		ss := &stageStarters[i]
 
-		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, StartOptions{PanicHandler: p.panicHandler}); err != nil {
+		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, p.startOptions(i)); err != nil {
 			return abort(i, err)
 		}
 	}
@@ -387,6 +404,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
 	var buf bytes.Buffer
 	p.stdout = writerNopCloser{&buf}
+	p.leaveStdoutOpen = true
 	err := p.Run(ctx)
 	return buf.Bytes(), err
 }

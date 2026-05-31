@@ -25,10 +25,7 @@ func (readerNopCloser) Close() error {
 	return nil
 }
 
-// writerNopCloser is a WriteCloser that wraps a provided `io.Writer`, but
-// whose `Close()` method does nothing. It should be unwrapped (via
-// [UnwrapWriter]) before use where fast-path interfaces such as
-// `io.ReaderFrom` are relevant.
+// writerNopCloser is the stdout counterpart of [readerNopCloser]
 type writerNopCloser struct {
 	io.Writer
 }

@@ -74,12 +74,12 @@ func (s *goStage) Start(
 					s.err = opts.PanicHandler(p)
 				}
 			}
-			if stdout != nil {
+			if stdout != nil && !opts.LeaveStdoutOpen {
 				if err := stdout.Close(); err != nil && s.err == nil {
 					s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
 				}
 			}
-			if stdin != nil {
+			if stdin != nil && !opts.LeaveStdinOpen {
 				if err := stdin.Close(); err != nil && s.err == nil {
 					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
 				}

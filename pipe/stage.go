@@ -10,13 +10,13 @@ import (
 //
 // Who closes stdin and stdout?
 //
-// A `Stage` as a whole needs to be responsible for closing its end of
+// A `Stage` as a whole is responsible for closing its end of
 // stdin and stdout (assuming that `Start()` returns successfully).
 // Its doing so tells the previous/next stage that it is done
 // reading/writing data, which can affect their behavior. Therefore,
 // it should close each one as soon as it is done with it. If the
 // caller wants to suppress the closing of stdin/stdout, it can always
-// wrap the corresponding argument in a "nopCloser".
+// indicate otherwise via `StartOptions`.
 //
 // How this should be done depends on whether stdin/stdout are of type
 // `*os.File`.
@@ -63,18 +63,17 @@ import (
 //	}()
 //
 // From the point of view of the pipeline as a whole, if stdin is
-// provided by the user (`WithStdin()`), then we don't want to close
-// it at all, whether it's an `*os.File` or not. For this reason,
-// stdin has to be wrapped using a `readerNopCloser` before being
-// passed into the first stage. For efficiency reasons, the first
-// stage should ideally unwrap its stdin argument (using
-// [UnwrapReader]) before actually using it. If the wrapped value is
-// an `*os.File` and the stage is a command stage, then unwrapping is
-// also important to get the right semantics.
+// provided by the user (`WithStdin()`), then we don't want the first
+// stage to close it at all, whether it's an `*os.File` or not. The
+// pipeline communicates this by setting `StartOptions.LeaveStdinOpen`
+// when it starts that stage. stdin is still wrapped in a
+// `readerNopCloser` before being passed in, but only so that a bare
+// `io.Reader` satisfies `io.ReadCloser`, and so that a command stage
+// can recover the underlying object via [UnwrapReader].
 //
 // For stdout, it depends on whether the user supplied it using
-// `WithStdout()` or `WithStdoutCloser()`. If the former, then the
-// considerations are the same as for stdin.
+// `WithStdout()` or `WithStdoutCloser()`. [UnwrapWriter] plays the same
+// role for stdout that [UnwrapReader] plays for stdin.
 //
 // [1] It's theoretically possible for a command to pass the open file
 //     descriptor to another, longer-lived process, in which case the
@@ -118,6 +117,10 @@ type StartOptions struct {
 	// handler), converting it into an error. Stage types that don't run
 	// user code in a library-spawned goroutine ignore it.
 	PanicHandler StagePanicHandler
+
+	// LeaveStd{in,out}Open tell the stage that it must NOT close stdin/stdout
+	LeaveStdinOpen  bool
+	LeaveStdoutOpen bool
 }
 
 // StagePanicHandler is a function that handles panics in a pipeline's stages.
