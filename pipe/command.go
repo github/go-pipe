@@ -77,13 +77,13 @@ func (s *commandStage) Preferences() StagePreferences {
 }
 
 func (s *commandStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions,
+	ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
 	if s.cmd.Dir == "" {
-		s.cmd.Dir = env.Dir
+		s.cmd.Dir = opts.Dir
 	}
 
-	s.setupEnv(ctx, env)
+	s.setupEnv(ctx, opts.Env)
 
 	// Things that have to be closed as soon as the command has
 	// started:

@@ -262,10 +262,10 @@ type stageStarter struct {
 	stdout io.WriteCloser
 }
 
-// startOptions builds the StartOptions for the stage at index i. It sets
+// stageOptions builds the StageOptions for the stage at index i. It sets
 // LeaveStdinOpen/LeaveStdoutOpen for the first and last stages, as appropriate.
-func (p *Pipeline) startOptions(i int) StartOptions {
-	opts := StartOptions{PanicHandler: p.panicHandler}
+func (p *Pipeline) stageOptions(i int) StageOptions {
+	opts := StageOptions{Env: p.env, PanicHandler: p.panicHandler}
 	if i == 0 && p.stdin != nil {
 		opts.LeaveStdinOpen = true
 	}
@@ -337,7 +337,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// Close the pipe that the previous stage was writing to.
 		// That should cause it to exit even if it's not minding
 		// its context.
-		if stageStarters[i].stdin != nil && !p.startOptions(i).LeaveStdinOpen {
+		if stageStarters[i].stdin != nil && !p.stageOptions(i).LeaveStdinOpen {
 			_ = stageStarters[i].stdin.Close()
 		}
 
@@ -378,7 +378,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		} else {
 			nextSS.stdin, ss.stdout = io.Pipe()
 		}
-		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, p.startOptions(i)); err != nil {
+		if err := s.Start(ctx, p.stageOptions(i), ss.stdin, ss.stdout); err != nil {
 			nextSS.stdin.Close()
 			ss.stdout.Close()
 			return abort(i, err)
@@ -393,7 +393,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		s := p.stages[i]
 		ss := &stageStarters[i]
 
-		if err := s.Start(ctx, p.env, ss.stdin, ss.stdout, p.startOptions(i)); err != nil {
+		if err := s.Start(ctx, p.stageOptions(i), ss.stdin, ss.stdout); err != nil {
 			return abort(i, err)
 		}
 	}

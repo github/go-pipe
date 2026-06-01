@@ -16,7 +16,7 @@ import (
 // reading/writing data, which can affect their behavior. Therefore,
 // it should close each one as soon as it is done with it. If the
 // caller wants to suppress the closing of stdin/stdout, it can always
-// indicate otherwise via `StartOptions`.
+// indicate otherwise via `StageOptions`.
 //
 // How this should be done depends on whether stdin/stdout are of type
 // `*os.File`.
@@ -65,7 +65,7 @@ import (
 // From the point of view of the pipeline as a whole, if stdin is
 // provided by the user (`WithStdin()`), then we don't want the first
 // stage to close it at all, whether it's an `*os.File` or not. The
-// pipeline communicates this by setting `StartOptions.LeaveStdinOpen`
+// pipeline communicates this by setting `StageOptions.LeaveStdinOpen`
 // when it starts that stage. stdin is still wrapped in a
 // `readerNopCloser` before being passed in, but only so that a bare
 // `io.Reader` satisfies `io.ReadCloser`, and so that a command stage
@@ -90,7 +90,7 @@ type Stage interface {
 	Preferences() StagePreferences
 
 	// Start starts the stage in the background, in the environment
-	// described by `env`, using `stdin` to provide its input and
+	// described by `opts.Env`, using `stdin` to provide its input and
 	// `stdout` to collect its output. (`stdin`/`stdout` might be set
 	// to `nil` if the stage is to receive no input, which might be
 	// the case for the first/last stage in a pipeline.) See the
@@ -99,7 +99,7 @@ type Stage interface {
 	//
 	// If `Start()` returns without an error, `Wait()` must also be
 	// called, to allow all resources to be freed.
-	Start(ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions) error
+	Start(ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser) error
 
 	// Wait waits for the stage to be done, either because it has
 	// finished or because it has been killed due to the expiration of
@@ -107,10 +107,13 @@ type Stage interface {
 	Wait() error
 }
 
-// StartOptions carries run-scoped options passed to `Stage.Start`.
-// It is a struct (rather than positional parameters) so that future
-// options can be added without breaking the `Stage` interface.
-type StartOptions struct {
+// StageOptions carries everything (other than `ctx`, `stdin`, and
+// `stdout`) that a pipeline passes to `Stage.Start`.
+type StageOptions struct {
+	// Env is the environment (working directory and extra environment
+	// variables) that the stage should run in.
+	Env
+
 	// PanicHandler, if non-nil, is invoked to recover a panic that escapes
 	// user code that a stage runs in a library-spawned goroutine (a
 	// Function stage's StageFunc, or a memory-limit stage's event

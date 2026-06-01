@@ -53,7 +53,7 @@ func (s *goStage) Preferences() StagePreferences {
 }
 
 func (s *goStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions,
+	ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
 	r := UnwrapReader(stdin)
 	if r == nil {
@@ -86,7 +86,7 @@ func (s *goStage) Start(
 			}
 			close(s.done)
 		}()
-		s.err = s.f(ctx, env, r, w)
+		s.err = s.f(ctx, opts.Env, r, w)
 	}()
 
 	return nil

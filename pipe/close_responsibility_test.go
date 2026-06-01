@@ -32,7 +32,7 @@ func (w *writeCloseSpy) Close() error {
 }
 
 // TestGoStageHonorsLeaveOpenFlags verifies that a Function stage closes
-// stdin/stdout iff the corresponding StartOptions.Leave*Open flag is unset.
+// stdin/stdout iff the corresponding StageOptions.Leave*Open flag is unset.
 func TestGoStageHonorsLeaveOpenFlags(t *testing.T) {
 	cases := []struct {
 		name              string
@@ -53,10 +53,10 @@ func TestGoStageHonorsLeaveOpenFlags(t *testing.T) {
 				return err
 			})
 
-			if err := s.Start(context.Background(), Env{}, in, out, StartOptions{
+			if err := s.Start(context.Background(), StageOptions{
 				LeaveStdinOpen:  tc.leaveIn,
 				LeaveStdoutOpen: tc.leaveOut,
-			}); err != nil {
+			}, in, out); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			if err := s.Wait(); err != nil {
@@ -88,9 +88,9 @@ func TestCommandStageHonorsLeaveStdinOpen(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(context.Background(), Env{}, in, nil, StartOptions{
+			if err := s.Start(context.Background(), StageOptions{
 				LeaveStdinOpen: leave,
-			}); err != nil {
+			}, in, nil); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			if err := s.Wait(); err != nil {
@@ -119,9 +119,9 @@ func TestCommandStageHonorsLeaveStdoutOpen(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(context.Background(), Env{}, nil, out, StartOptions{
+			if err := s.Start(context.Background(), StageOptions{
 				LeaveStdoutOpen: leave,
-			}); err != nil {
+			}, nil, out); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			if err := s.Wait(); err != nil {

@@ -43,7 +43,7 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(ctx, Env{}, nil, tc.wrap(f), StartOptions{}); err != nil {
+			if err := s.Start(ctx, StageOptions{}, nil, tc.wrap(f)); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			t.Cleanup(func() { _ = s.Wait() })

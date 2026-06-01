@@ -602,7 +602,7 @@ func (s ErrorStartingStage) Preferences() pipe.StagePreferences {
 }
 
 func (s ErrorStartingStage) Start(
-	_ context.Context, _ pipe.Env, stdin io.ReadCloser, stdout io.WriteCloser, _ pipe.StartOptions,
+	_ context.Context, _ pipe.StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
 ) error {
 	if stdin != nil {
 		_ = stdin.Close()
