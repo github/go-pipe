@@ -127,15 +127,7 @@ func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
 		select {
 		case <-ctx.Done():
 			if mw.cfg.observe {
-				mw.eventHandler(&Event{
-					Command: stage.Name(),
-					Msg:     "peak memory usage",
-					Context: map[string]interface{}{
-						"max_rss_bytes": mw.maxRSS,
-						"samples":       mw.samples,
-						"errors":        mw.errCount,
-					},
-				})
+				mw.reportPeakUsage(stage)
 			}
 			return
 		case <-t.C:
@@ -147,19 +139,7 @@ func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
 
 			rss, err := stage.GetRSSAnon(ctx)
 			if err != nil {
-				if !errors.Is(err, errProcessInfoMissing) {
-					mw.errCount++
-					mw.consecutiveErrors++
-					if mw.consecutiveErrors == 2 {
-						mw.eventHandler(&Event{
-							Command: stage.Name(),
-							Msg:     "error getting RSS",
-							Err:     err,
-						})
-					}
-				} else {
-					mw.consecutiveErrors = 0
-				}
+				mw.handleGetRSSError(stage, err)
 				continue
 			}
 
@@ -170,20 +150,8 @@ func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
 			}
 
 			if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
-				func() {
-					// Guarantee the over-limit stage is killed even if
-					// the user's event handler panics.
-					defer stage.Kill(ErrMemoryLimitExceeded)
-					mw.eventHandler(&Event{
-						Command: stage.Name(),
-						Msg:     "stage exceeded allowed memory use",
-						Err:     fmt.Errorf("stage exceeded allowed memory use"),
-						Context: map[string]interface{}{
-							"limit": *mw.cfg.limit,
-							"used":  rss,
-						},
-					})
-				}()
+				mw.killStage(stage, rss)
+
 				if !mw.cfg.observe {
 					return
 				}
@@ -191,6 +159,55 @@ func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
 			}
 		}
 	}
+}
+
+// handleGetRSSError deals with error `err` that happened when trying
+// to get `stage`'s memory usage.
+func (mw *memoryWatcher) handleGetRSSError(stage LimitableStage, err error) {
+	if !errors.Is(err, errProcessInfoMissing) {
+		mw.errCount++
+		mw.consecutiveErrors++
+		if mw.consecutiveErrors == 2 {
+			mw.eventHandler(&Event{
+				Command: stage.Name(),
+				Msg:     "error getting RSS",
+				Err:     err,
+			})
+		}
+	} else {
+		mw.consecutiveErrors = 0
+	}
+}
+
+// killStage kills `stage` and reports and event saying what it did.
+func (mw *memoryWatcher) killStage(stage LimitableStage, rss uint64) {
+	// Guarantee the over-limit stage is killed even if
+	// the user's event handler panics.
+	defer stage.Kill(ErrMemoryLimitExceeded)
+
+	mw.eventHandler(&Event{
+		Command: stage.Name(),
+		Msg:     "stage exceeded allowed memory use",
+		Err:     fmt.Errorf("stage exceeded allowed memory use"),
+		Context: map[string]any{
+			"limit": *mw.cfg.limit,
+			"used":  rss,
+		},
+	})
+}
+
+// reportPeakUsage sends an event reporting the peak usage that has
+// been seen for `stage`.
+func (mw *memoryWatcher) reportPeakUsage(stage LimitableStage) {
+	mw.eventHandler(&Event{
+		Command: stage.Name(),
+		Msg:     "peak memory usage",
+		Context: map[string]any{
+			"max_rss_bytes": mw.maxRSS,
+			"samples":       mw.samples,
+			"errors":        mw.errCount,
+		},
+	})
 }
 
 type memoryWatchStage struct {
