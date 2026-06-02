@@ -14,10 +14,12 @@ import (
 const memWatchPanicSentinel = "memwatch-panic-sentinel"
 const memWatchPanicChildEnv = "GO_PIPE_MEMWATCH_PANIC_CHILD"
 
-// fakeLimitableStage is a minimal LimitableStage whose Wait returns
-// immediately, letting a memoryWatchStage test exercise its watch
-// goroutine in isolation.
-type fakeLimitableStage struct{}
+// fakeLimitableStage is a minimal LimitableStage whose `GetRSSAnon()`
+// method panics, and whose `Wait()` method returns after that panic
+// has been issued.
+type fakeLimitableStage struct {
+	done chan struct{}
+}
 
 func (fakeLimitableStage) Name() string                  { return "fake" }
 func (fakeLimitableStage) Preferences() StagePreferences { return StagePreferences{} }
@@ -26,15 +28,23 @@ func (fakeLimitableStage) Start(
 ) error {
 	return nil
 }
-func (fakeLimitableStage) Wait() error                                { return nil }
-func (fakeLimitableStage) GetRSSAnon(context.Context) (uint64, error) { return 0, nil }
-func (fakeLimitableStage) Kill(error)                                 {}
+func (stage fakeLimitableStage) Wait() error {
+	<-stage.done
+	return nil
+}
 
-func panickingWatchStage() *memoryWatchStage {
-	return &memoryWatchStage{
-		stage: fakeLimitableStage{},
-		watch: func(context.Context) { panic(memWatchPanicSentinel) },
+func (stage fakeLimitableStage) GetRSSAnon(context.Context) (uint64, error) {
+	close(stage.done)
+	panic(memWatchPanicSentinel)
+}
+
+func (fakeLimitableStage) Kill(error) {}
+
+func panickingWatchStage() Stage {
+	stage := fakeLimitableStage{
+		done: make(chan struct{}),
 	}
+	return MemoryWatch(stage, func(*Event) {}, WithMemoryLimit(1))
 }
 
 // TestMemoryWatchStagePanicWithHandlerSurfaced verifies that a panic
