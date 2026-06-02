@@ -127,23 +127,8 @@ watchLoop:
 		case <-ctx.Done():
 			break watchLoop
 		case <-t.C:
-			rss, err := stage.GetRSSAnon(ctx)
-			if err != nil {
-				mw.handleGetRSSError(stage, err)
-				continue
-			}
-
-			mw.consecutiveErrors = 0
-			mw.samples++
-			if rss > mw.maxRSS {
-				mw.maxRSS = rss
-			}
-
-			if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
-				mw.killStage(stage, rss)
-
-				// After a kill we wait for `ctx.Done()` and then emit
-				// the peak-usage event.
+			if mw.update(ctx, stage) {
+				// The stage was killed.
 				break watchLoop
 			}
 		}
@@ -155,6 +140,29 @@ watchLoop:
 		<-ctx.Done()
 		mw.reportPeakUsage(stage)
 	}
+}
+
+// update samples the current memory usage and updates internal stats.
+// Return true if the stage was killed for exceeding the memory limit.
+func (mw *memoryWatcher) update(ctx context.Context, stage LimitableStage) bool {
+	rss, err := stage.GetRSSAnon(ctx)
+	if err != nil {
+		mw.handleGetRSSError(stage, err)
+		return false
+	}
+
+	mw.consecutiveErrors = 0
+	mw.samples++
+	if rss > mw.maxRSS {
+		mw.maxRSS = rss
+	}
+
+	if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
+		mw.killStage(stage, rss)
+		return true
+	}
+
+	return false
 }
 
 // handleGetRSSError deals with error `err` that happened when trying
