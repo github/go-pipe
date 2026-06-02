@@ -98,85 +98,96 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 }
 
 func (c *memoryWatchConfig) watchFunc(eventHandler func(e *Event)) memoryWatchFunc {
-	limit := c.limit
-	observe := c.observe
+	mw := memoryWatcher{
+		cfg:          c,
+		eventHandler: eventHandler,
+	}
 
-	return func(ctx context.Context, stage LimitableStage) {
-		var (
-			maxRSS                               uint64
-			samples, errCount, consecutiveErrors int
-			killed                               bool
-		)
+	return mw.watch
+}
 
-		t := time.NewTicker(memoryPollInterval)
-		defer t.Stop()
+type memoryWatcher struct {
+	cfg          *memoryWatchConfig
+	eventHandler func(e *Event)
 
-		for {
-			select {
-			case <-ctx.Done():
-				if observe {
-					eventHandler(&Event{
+	maxRSS            uint64
+	samples           int
+	errCount          int
+	consecutiveErrors int
+	killed            bool
+}
+
+// watch is a `memoryWatchFunc` that watches the memory usage of the
+// specified `stage`.
+func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
+	t := time.NewTicker(memoryPollInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			if mw.cfg.observe {
+				mw.eventHandler(&Event{
+					Command: stage.Name(),
+					Msg:     "peak memory usage",
+					Context: map[string]interface{}{
+						"max_rss_bytes": mw.maxRSS,
+						"samples":       mw.samples,
+						"errors":        mw.errCount,
+					},
+				})
+			}
+			return
+		case <-t.C:
+			if mw.killed {
+				// After a kill we only remain in the loop to emit the
+				// peak-usage event at ctx.Done; stop sampling.
+				continue
+			}
+
+			rss, err := stage.GetRSSAnon(ctx)
+			if err != nil {
+				if !errors.Is(err, errProcessInfoMissing) {
+					mw.errCount++
+					mw.consecutiveErrors++
+					if mw.consecutiveErrors == 2 {
+						mw.eventHandler(&Event{
+							Command: stage.Name(),
+							Msg:     "error getting RSS",
+							Err:     err,
+						})
+					}
+				} else {
+					mw.consecutiveErrors = 0
+				}
+				continue
+			}
+
+			mw.consecutiveErrors = 0
+			mw.samples++
+			if rss > mw.maxRSS {
+				mw.maxRSS = rss
+			}
+
+			if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
+				func() {
+					// Guarantee the over-limit stage is killed even if
+					// the user's event handler panics.
+					defer stage.Kill(ErrMemoryLimitExceeded)
+					mw.eventHandler(&Event{
 						Command: stage.Name(),
-						Msg:     "peak memory usage",
+						Msg:     "stage exceeded allowed memory use",
+						Err:     fmt.Errorf("stage exceeded allowed memory use"),
 						Context: map[string]interface{}{
-							"max_rss_bytes": maxRSS,
-							"samples":       samples,
-							"errors":        errCount,
+							"limit": *mw.cfg.limit,
+							"used":  rss,
 						},
 					})
+				}()
+				if !mw.cfg.observe {
+					return
 				}
-				return
-			case <-t.C:
-				if killed {
-					// After a kill we only remain in the loop to emit the
-					// peak-usage event at ctx.Done; stop sampling.
-					continue
-				}
-
-				rss, err := stage.GetRSSAnon(ctx)
-				if err != nil {
-					if !errors.Is(err, errProcessInfoMissing) {
-						errCount++
-						consecutiveErrors++
-						if consecutiveErrors == 2 {
-							eventHandler(&Event{
-								Command: stage.Name(),
-								Msg:     "error getting RSS",
-								Err:     err,
-							})
-						}
-					} else {
-						consecutiveErrors = 0
-					}
-					continue
-				}
-
-				consecutiveErrors = 0
-				samples++
-				if rss > maxRSS {
-					maxRSS = rss
-				}
-
-				if limit != nil && rss >= *limit {
-					func() {
-						// Guarantee the over-limit stage is killed even if
-						// the user's event handler panics.
-						defer stage.Kill(ErrMemoryLimitExceeded)
-						eventHandler(&Event{
-							Command: stage.Name(),
-							Msg:     "stage exceeded allowed memory use",
-							Err:     fmt.Errorf("stage exceeded allowed memory use"),
-							Context: map[string]interface{}{
-								"limit": *limit,
-								"used":  rss,
-							},
-						})
-					}()
-					if !observe {
-						return
-					}
-					killed = true
-				}
+				mw.killed = true
 			}
 		}
 	}
