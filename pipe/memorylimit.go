@@ -249,14 +249,15 @@ func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicH
 
 	go func() {
 		defer m.wg.Done()
-		defer func() {
-			if p := recover(); p != nil {
-				if panicHandler == nil {
-					panic(p)
+
+		if panicHandler != nil {
+			defer func() {
+				if p := recover(); p != nil {
+					m.watchErr = panicHandler(p)
 				}
-				m.watchErr = panicHandler(p)
-			}
-		}()
+			}()
+		}
+
 		m.watch(ctx)
 	}()
 }
