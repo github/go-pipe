@@ -93,13 +93,16 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 	return &memoryWatchStage{
 		nameSuffix: nameSuffix,
 		stage:      limitableStage,
-		watch:      cfg.watchFunc(eventHandler),
+		watch:      cfg.watchFunc(limitableStage, eventHandler),
 	}
 }
 
-func (c *memoryWatchConfig) watchFunc(eventHandler func(e *Event)) memoryWatchFunc {
+func (c *memoryWatchConfig) watchFunc(
+	stage LimitableStage, eventHandler func(e *Event),
+) memoryWatchFunc {
 	mw := memoryWatcher{
 		cfg:          c,
+		stage:        stage,
 		eventHandler: eventHandler,
 	}
 
@@ -108,6 +111,7 @@ func (c *memoryWatchConfig) watchFunc(eventHandler func(e *Event)) memoryWatchFu
 
 type memoryWatcher struct {
 	cfg          *memoryWatchConfig
+	stage        LimitableStage
 	eventHandler func(e *Event)
 
 	maxRSS            uint64
@@ -118,7 +122,7 @@ type memoryWatcher struct {
 
 // watch is a `memoryWatchFunc` that watches the memory usage of the
 // specified `stage`.
-func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
+func (mw *memoryWatcher) watch(ctx context.Context) {
 	t := time.NewTicker(memoryPollInterval)
 
 watchLoop:
@@ -127,7 +131,7 @@ watchLoop:
 		case <-ctx.Done():
 			break watchLoop
 		case <-t.C:
-			if mw.update(ctx, stage) {
+			if mw.update(ctx) {
 				// The stage was killed.
 				break watchLoop
 			}
@@ -138,16 +142,16 @@ watchLoop:
 
 	if mw.cfg.observe {
 		<-ctx.Done()
-		mw.reportPeakUsage(stage)
+		mw.reportPeakUsage()
 	}
 }
 
 // update samples the current memory usage and updates internal stats.
 // Return true if the stage was killed for exceeding the memory limit.
-func (mw *memoryWatcher) update(ctx context.Context, stage LimitableStage) bool {
-	rss, err := stage.GetRSSAnon(ctx)
+func (mw *memoryWatcher) update(ctx context.Context) bool {
+	rss, err := mw.stage.GetRSSAnon(ctx)
 	if err != nil {
-		mw.handleGetRSSError(stage, err)
+		mw.handleGetRSSError(err)
 		return false
 	}
 
@@ -158,7 +162,7 @@ func (mw *memoryWatcher) update(ctx context.Context, stage LimitableStage) bool 
 	}
 
 	if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
-		mw.killStage(stage, rss)
+		mw.killStage(rss)
 		return true
 	}
 
@@ -167,13 +171,13 @@ func (mw *memoryWatcher) update(ctx context.Context, stage LimitableStage) bool 
 
 // handleGetRSSError deals with error `err` that happened when trying
 // to get `stage`'s memory usage.
-func (mw *memoryWatcher) handleGetRSSError(stage LimitableStage, err error) {
+func (mw *memoryWatcher) handleGetRSSError(err error) {
 	if !errors.Is(err, errProcessInfoMissing) {
 		mw.errCount++
 		mw.consecutiveErrors++
 		if mw.consecutiveErrors == 2 {
 			mw.eventHandler(&Event{
-				Command: stage.Name(),
+				Command: mw.stage.Name(),
 				Msg:     "error getting RSS",
 				Err:     err,
 			})
@@ -183,14 +187,14 @@ func (mw *memoryWatcher) handleGetRSSError(stage LimitableStage, err error) {
 	}
 }
 
-// killStage kills `stage` and reports and event saying what it did.
-func (mw *memoryWatcher) killStage(stage LimitableStage, rss uint64) {
+// killStage kills the stage and reports and event saying what it did.
+func (mw *memoryWatcher) killStage(rss uint64) {
 	// Guarantee the over-limit stage is killed even if
 	// the user's event handler panics.
-	defer stage.Kill(ErrMemoryLimitExceeded)
+	defer mw.stage.Kill(ErrMemoryLimitExceeded)
 
 	mw.eventHandler(&Event{
-		Command: stage.Name(),
+		Command: mw.stage.Name(),
 		Msg:     "stage exceeded allowed memory use",
 		Err:     fmt.Errorf("stage exceeded allowed memory use"),
 		Context: map[string]any{
@@ -202,9 +206,9 @@ func (mw *memoryWatcher) killStage(stage LimitableStage, rss uint64) {
 
 // reportPeakUsage sends an event reporting the peak usage that has
 // been seen for `stage`.
-func (mw *memoryWatcher) reportPeakUsage(stage LimitableStage) {
+func (mw *memoryWatcher) reportPeakUsage() {
 	mw.eventHandler(&Event{
-		Command: stage.Name(),
+		Command: mw.stage.Name(),
 		Msg:     "peak memory usage",
 		Context: map[string]any{
 			"max_rss_bytes": mw.maxRSS,
@@ -223,7 +227,7 @@ type memoryWatchStage struct {
 	watchErr   error
 }
 
-type memoryWatchFunc func(context.Context, LimitableStage)
+type memoryWatchFunc func(context.Context)
 
 var _ LimitableStage = (*memoryWatchStage)(nil)
 
@@ -265,7 +269,7 @@ func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicH
 				m.watchErr = panicHandler(p)
 			}
 		}()
-		m.watch(ctx, m.stage)
+		m.watch(ctx)
 	}()
 }
 

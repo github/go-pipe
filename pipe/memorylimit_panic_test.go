@@ -33,7 +33,7 @@ func (fakeLimitableStage) Kill(error)                                 {}
 func panickingWatchStage() *memoryWatchStage {
 	return &memoryWatchStage{
 		stage: fakeLimitableStage{},
-		watch: func(context.Context, LimitableStage) { panic(memWatchPanicSentinel) },
+		watch: func(context.Context) { panic(memWatchPanicSentinel) },
 	}
 }
 
@@ -151,7 +151,7 @@ func TestMemoryLimitKillsEvenIfEventHandlerPanics(t *testing.T) {
 	ms := &memoryWatchStage{
 		stage: stage,
 		watch: (&memoryWatchConfig{limit: &limit}).watchFunc(
-			func(*Event) { panic(memWatchPanicSentinel) },
+			stage, func(*Event) { panic(memWatchPanicSentinel) },
 		),
 	}
 	opts := StartOptions{
