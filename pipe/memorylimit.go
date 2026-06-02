@@ -112,6 +112,7 @@ type memoryWatcher struct {
 // specified `stage`.
 func (mw *memoryWatcher) watch(ctx context.Context) {
 	t := time.NewTicker(memoryPollInterval)
+	defer t.Stop()
 
 watchLoop:
 	for {
@@ -125,8 +126,6 @@ watchLoop:
 			}
 		}
 	}
-
-	t.Stop()
 
 	if mw.observe {
 		<-ctx.Done()
