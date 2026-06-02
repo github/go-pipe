@@ -148,11 +148,15 @@ func (s *killTrackingStage) Kill(error) {
 func TestMemoryLimitKillsEvenIfEventHandlerPanics(t *testing.T) {
 	stage := newKillTrackingStage()
 	limit := uint64(1)
+	eventHandler := func(*Event) { panic(memWatchPanicSentinel) }
+	mw := memoryWatcher{
+		stage:        stage,
+		eventHandler: eventHandler,
+		limit:        &limit,
+	}
 	ms := &memoryWatchStage{
 		stage: stage,
-		watch: (&memoryWatchConfig{limit: &limit}).watchFunc(
-			stage, func(*Event) { panic(memWatchPanicSentinel) },
-		),
+		watch: mw.watch,
 	}
 	opts := StartOptions{
 		PanicHandler: func(p any) error { return fmt.Errorf("recovered: %v", p) },

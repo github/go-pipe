@@ -25,26 +25,21 @@ type LimitableStage interface {
 }
 
 // MemoryWatchOption configures a MemoryWatch stage.
-type MemoryWatchOption func(*memoryWatchConfig)
-
-type memoryWatchConfig struct {
-	limit   *uint64 // non-nil enables kill-at-limit
-	observe bool    // log peak RSS when the stage exits
-}
+type MemoryWatchOption func(*memoryWatcher)
 
 // WithMemoryLimit makes MemoryWatch kill the stage when its RSS exceeds
 // byteLimit.
 func WithMemoryLimit(byteLimit uint64) MemoryWatchOption {
-	return func(c *memoryWatchConfig) {
-		c.limit = &byteLimit
+	return func(mw *memoryWatcher) {
+		mw.limit = &byteLimit
 	}
 }
 
 // WithPeakUsageLogging makes MemoryWatch log the peak RSS when the stage
 // exits.
 func WithPeakUsageLogging() MemoryWatchOption {
-	return func(c *memoryWatchConfig) {
-		c.observe = true
+	return func(mw *memoryWatcher) {
+		mw.observe = true
 	}
 }
 
@@ -59,11 +54,6 @@ func WithPeakUsageLogging() MemoryWatchOption {
 // StartOptions.PanicHandler and the stage keeps running unmonitored; see
 // StartOptions.PanicHandler.
 func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOption) Stage {
-	var cfg memoryWatchConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
 	limitableStage, ok := stage.(LimitableStage)
 	if !ok {
 		eventHandler(&Event{
@@ -74,7 +64,15 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 		return stage
 	}
 
-	if cfg.limit == nil && !cfg.observe {
+	mw := memoryWatcher{
+		stage:        limitableStage,
+		eventHandler: eventHandler,
+	}
+	for _, opt := range opts {
+		opt(&mw)
+	}
+
+	if mw.limit == nil && !mw.observe {
 		eventHandler(&Event{
 			Command: stage.Name(),
 			Msg:     "invalid pipe.MemoryWatch usage",
@@ -86,33 +84,23 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 	}
 
 	nameSuffix := ""
-	if cfg.limit != nil {
+	if mw.limit != nil {
 		nameSuffix = " with memory limit"
 	}
 
 	return &memoryWatchStage{
 		nameSuffix: nameSuffix,
 		stage:      limitableStage,
-		watch:      cfg.watchFunc(limitableStage, eventHandler),
+		watch:      mw.watch,
 	}
-}
-
-func (c *memoryWatchConfig) watchFunc(
-	stage LimitableStage, eventHandler func(e *Event),
-) memoryWatchFunc {
-	mw := memoryWatcher{
-		cfg:          c,
-		stage:        stage,
-		eventHandler: eventHandler,
-	}
-
-	return mw.watch
 }
 
 type memoryWatcher struct {
-	cfg          *memoryWatchConfig
 	stage        LimitableStage
 	eventHandler func(e *Event)
+
+	limit   *uint64 // non-nil enables kill-at-limit
+	observe bool    // log peak RSS when the stage exits
 
 	maxRSS            uint64
 	samples           int
@@ -140,7 +128,7 @@ watchLoop:
 
 	t.Stop()
 
-	if mw.cfg.observe {
+	if mw.observe {
 		<-ctx.Done()
 		mw.reportPeakUsage()
 	}
@@ -161,7 +149,7 @@ func (mw *memoryWatcher) update(ctx context.Context) bool {
 		mw.maxRSS = rss
 	}
 
-	if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
+	if mw.limit != nil && rss >= *mw.limit {
 		mw.killStage(rss)
 		return true
 	}
@@ -198,7 +186,7 @@ func (mw *memoryWatcher) killStage(rss uint64) {
 		Msg:     "stage exceeded allowed memory use",
 		Err:     fmt.Errorf("stage exceeded allowed memory use"),
 		Context: map[string]any{
-			"limit": *mw.cfg.limit,
+			"limit": *mw.limit,
 			"used":  rss,
 		},
 	})
