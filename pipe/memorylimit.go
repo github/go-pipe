@@ -114,29 +114,19 @@ type memoryWatcher struct {
 	samples           int
 	errCount          int
 	consecutiveErrors int
-	killed            bool
 }
 
 // watch is a `memoryWatchFunc` that watches the memory usage of the
 // specified `stage`.
 func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
 	t := time.NewTicker(memoryPollInterval)
-	defer t.Stop()
 
+watchLoop:
 	for {
 		select {
 		case <-ctx.Done():
-			if mw.cfg.observe {
-				mw.reportPeakUsage(stage)
-			}
-			return
+			break watchLoop
 		case <-t.C:
-			if mw.killed {
-				// After a kill we only remain in the loop to emit the
-				// peak-usage event at ctx.Done; stop sampling.
-				continue
-			}
-
 			rss, err := stage.GetRSSAnon(ctx)
 			if err != nil {
 				mw.handleGetRSSError(stage, err)
@@ -152,12 +142,18 @@ func (mw *memoryWatcher) watch(ctx context.Context, stage LimitableStage) {
 			if mw.cfg.limit != nil && rss >= *mw.cfg.limit {
 				mw.killStage(stage, rss)
 
-				if !mw.cfg.observe {
-					return
-				}
-				mw.killed = true
+				// After a kill we wait for `ctx.Done()` and then emit
+				// the peak-usage event.
+				break watchLoop
 			}
 		}
+	}
+
+	t.Stop()
+
+	if mw.cfg.observe {
+		<-ctx.Done()
+		mw.reportPeakUsage(stage)
 	}
 }
 
