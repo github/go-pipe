@@ -4,20 +4,21 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 const memWatchPanicSentinel = "memwatch-panic-sentinel"
-const memWatchPanicChildEnv = "GO_PIPE_MEMWATCH_PANIC_CHILD"
 
-// fakeLimitableStage is a minimal LimitableStage whose Wait returns
-// immediately, letting a memoryWatchStage test exercise its watch
-// goroutine in isolation.
-type fakeLimitableStage struct{}
+// fakeLimitableStage is a minimal LimitableStage whose `GetRSSAnon()`
+// method panics, and whose `Wait()` method returns after that panic
+// has been issued.
+type fakeLimitableStage struct {
+	done chan struct{}
+}
 
 func (fakeLimitableStage) Name() string                  { return "fake" }
 func (fakeLimitableStage) Preferences() StagePreferences { return StagePreferences{} }
@@ -26,15 +27,23 @@ func (fakeLimitableStage) Start(
 ) error {
 	return nil
 }
-func (fakeLimitableStage) Wait() error                                { return nil }
-func (fakeLimitableStage) GetRSSAnon(context.Context) (uint64, error) { return 0, nil }
-func (fakeLimitableStage) Kill(error)                                 {}
+func (stage fakeLimitableStage) Wait() error {
+	<-stage.done
+	return nil
+}
 
-func panickingWatchStage() *memoryWatchStage {
-	return &memoryWatchStage{
-		stage: fakeLimitableStage{},
-		watch: func(context.Context, LimitableStage) { panic(memWatchPanicSentinel) },
+func (stage fakeLimitableStage) GetRSSAnon(context.Context) (uint64, error) {
+	close(stage.done)
+	panic(memWatchPanicSentinel)
+}
+
+func (fakeLimitableStage) Kill(error) {}
+
+func panickingWatchStage() Stage {
+	stage := fakeLimitableStage{
+		done: make(chan struct{}),
 	}
+	return MemoryWatch(stage, func(*Event) {}, WithMemoryLimit(1))
 }
 
 // TestMemoryWatchStagePanicWithHandlerSurfaced verifies that a panic
@@ -60,47 +69,24 @@ func TestMemoryWatchStagePanicWithHandlerSurfaced(t *testing.T) {
 	}
 }
 
-// TestMemoryWatchStagePanicWithoutHandlerPropagates verifies that when
-// the memory-watch goroutine panics and no panic handler is installed,
-// the panic propagates (crashing the process) rather than being
-// silently swallowed. Because that would crash the test binary, the
-// scenario runs in a re-exec'd subprocess.
+// TestMemoryWatchStagePanicWithoutHandlerPropagates verifies that the
+// memory-watch sampling path does not swallow a panic. The monitor
+// goroutine only installs a recover when a handler is present (see
+// memoryWatchStage.monitor), so we exercise update() directly and assert
+// that it propagates the panic. update() is used rather than watch() so the
+// assertion is synchronous and ticker-independent: a regression that stopped
+// the panic would fail the test rather than hang on the ticker loop.
 func TestMemoryWatchStagePanicWithoutHandlerPropagates(t *testing.T) {
-	if os.Getenv(memWatchPanicChildEnv) == "1" {
-		runMemWatchPanicChild()
-		return
+	limit := uint64(1)
+	mw := memoryWatchStage{
+		stage:        fakeLimitableStage{done: make(chan struct{})},
+		eventHandler: func(*Event) {},
+		limit:        &limit,
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestMemoryWatchStagePanicWithoutHandlerPropagates$", "-test.v") //nolint:gosec // re-exec of this test binary with constant arguments.
-	cmd.Env = append(os.Environ(), memWatchPanicChildEnv+"=1")
-	out, err := cmd.CombinedOutput()
-	output := string(out)
-
-	if err == nil {
-		t.Fatalf("expected subprocess to crash from a propagated panic, but it exited 0\noutput:\n%s", output)
-	}
-	if strings.Contains(output, "SURVIVED") {
-		t.Fatalf("panic was swallowed: Wait returned instead of propagating\noutput:\n%s", output)
-	}
-	if !strings.Contains(output, "panic:") || !strings.Contains(output, memWatchPanicSentinel) {
-		t.Fatalf("expected a propagated panic mentioning %q, got:\n%s", memWatchPanicSentinel, output)
-	}
-}
-
-func runMemWatchPanicChild() {
-	ms := panickingWatchStage()
-
-	if err := ms.Start(context.Background(), Env{}, nil, nil, StartOptions{}); err != nil {
-		os.Stdout.WriteString("SURVIVED: Start returned err=" + err.Error() + "\n")
-		os.Exit(0)
-	}
-
-	_ = ms.Wait()
-
-	// Reaching this point at all indicates the panic was swallowed.
-	time.Sleep(2 * time.Second)
-	os.Stdout.WriteString("SURVIVED: Wait returned\n")
-	os.Exit(0)
+	assert.PanicsWithValue(t, memWatchPanicSentinel, func() {
+		mw.update(context.Background())
+	})
 }
 
 // killTrackingStage is a LimitableStage that reports an over-limit RSS
@@ -147,10 +133,8 @@ func (s *killTrackingStage) Kill(error) {
 // would never be killed and Wait would hang.
 func TestMemoryLimitKillsEvenIfEventHandlerPanics(t *testing.T) {
 	stage := newKillTrackingStage()
-	ms := &memoryWatchStage{
-		stage: stage,
-		watch: killAtLimit(1, func(*Event) { panic(memWatchPanicSentinel) }),
-	}
+	eventHandler := func(*Event) { panic(memWatchPanicSentinel) }
+	ms := MemoryWatch(stage, eventHandler, WithMemoryLimit(1))
 	opts := StartOptions{
 		PanicHandler: func(p any) error { return fmt.Errorf("recovered: %v", p) },
 	}

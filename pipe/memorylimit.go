@@ -12,11 +12,11 @@ import (
 const memoryPollInterval = time.Second
 
 // ErrMemoryLimitExceeded is the error that will be used to kill a
-// process, if necessary, from MemoryLimit.
+// process, if necessary, from a MemoryWatch with WithMemoryLimit.
 var ErrMemoryLimitExceeded = errors.New("memory limit exceeded")
 
 // LimitableStage is the superset of `Stage` that must be implemented
-// by stages passed to MemoryLimit and MemoryObserver.
+// by stages passed to MemoryWatch.
 type LimitableStage interface {
 	Stage
 
@@ -24,262 +24,86 @@ type LimitableStage interface {
 	Kill(error)
 }
 
-// MemoryLimit watches the memory usage of the stage and stops it if it
-// exceeds the given limit.
+// MemoryWatchOption configures a MemoryWatch stage.
+type MemoryWatchOption func(*memoryWatchStage)
+
+// WithMemoryLimit makes MemoryWatch kill the stage when its RSS exceeds
+// byteLimit.
+func WithMemoryLimit(byteLimit uint64) MemoryWatchOption {
+	return func(m *memoryWatchStage) {
+		m.limit = &byteLimit
+		m.nameSuffix = " with memory limit"
+	}
+}
+
+// WithPeakUsageLogging makes MemoryWatch log the peak RSS when the stage
+// exits.
+func WithPeakUsageLogging() MemoryWatchOption {
+	return func(m *memoryWatchStage) {
+		m.observe = true
+	}
+}
+
+// MemoryWatch watches the memory usage of the stage and reports via
+// eventHandler. With WithMemoryLimit it kills the stage when the limit is
+// exceeded; with WithPeakUsageLogging it logs the peak RSS when the stage
+// exits. At least one of the two options is required.
 //
 // If the event handler panics while reporting the over-limit event, the
 // stage is still killed. A panic in any other event-handler call (an
-// RSS-read error) is recovered via StartOptions.PanicHandler and the
-// stage keeps running unmonitored; see StartOptions.PanicHandler.
-func MemoryLimit(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Stage {
-
+// RSS-read error, or the peak-usage report) is recovered via
+// StartOptions.PanicHandler and the stage keeps running unmonitored; see
+// StartOptions.PanicHandler.
+func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOption) Stage {
 	limitableStage, ok := stage.(LimitableStage)
 	if !ok {
 		eventHandler(&Event{
 			Command: stage.Name(),
-			Msg:     "invalid pipe.MemoryLimit usage",
-			Err:     fmt.Errorf("invalid pipe.MemoryLimit usage"),
+			Msg:     "invalid pipe.MemoryWatch usage",
+			Err:     fmt.Errorf("invalid pipe.MemoryWatch usage"),
 		})
 		return stage
 	}
 
-	return &memoryWatchStage{
-		nameSuffix: " with memory limit",
-		stage:      limitableStage,
-		watch:      killAtLimit(byteLimit, eventHandler),
+	m := memoryWatchStage{
+		stage:        limitableStage,
+		eventHandler: eventHandler,
 	}
-}
-
-func killAtLimit(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc {
-	return func(ctx context.Context, stage LimitableStage) {
-		var consecutiveErrors int
-
-		t := time.NewTicker(memoryPollInterval)
-		defer t.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				rss, err := stage.GetRSSAnon(ctx)
-				if err != nil && !errors.Is(err, errProcessInfoMissing) {
-					consecutiveErrors++
-					if consecutiveErrors >= 2 {
-						eventHandler(&Event{
-							Command: stage.Name(),
-							Msg:     "error getting RSS",
-							Err:     err,
-						})
-					}
-					continue
-				}
-				consecutiveErrors = 0
-				if rss < byteLimit {
-					continue
-				}
-				func() {
-					// Guarantee the over-limit stage is killed even if
-					// the user's event handler panics.
-					defer stage.Kill(ErrMemoryLimitExceeded)
-					eventHandler(&Event{
-						Command: stage.Name(),
-						Msg:     "stage exceeded allowed memory use",
-						Err:     fmt.Errorf("stage exceeded allowed memory use"),
-						Context: map[string]interface{}{
-							"limit": byteLimit,
-							"used":  rss,
-						},
-					})
-				}()
-				return
-			}
-		}
+	for _, opt := range opts {
+		opt(&m)
 	}
-}
 
-// MemoryLimitWithObserver combines MemoryLimit and MemoryObserver in
-// one goroutine. It watches the memory usage of the stage, stops it
-// if it exceeds the given limit, and logs the peak memory usage when
-// the stage exits.
-//
-// Its event-handler panic behavior matches MemoryLimit: the over-limit
-// kill always happens, while a panic in the RSS-error or peak-usage
-// handler is recovered via StartOptions.PanicHandler and the stage keeps
-// running unmonitored. See StartOptions.PanicHandler.
-func MemoryLimitWithObserver(stage Stage, byteLimit uint64, eventHandler func(e *Event)) Stage {
-	limitableStage, ok := stage.(LimitableStage)
-	if !ok {
+	if m.limit == nil && !m.observe {
 		eventHandler(&Event{
 			Command: stage.Name(),
-			Msg:     "invalid pipe.MemoryLimitWithObserver usage",
-			Err:     fmt.Errorf("invalid pipe.MemoryLimitWithObserver usage"),
+			Msg:     "invalid pipe.MemoryWatch usage",
+			Err: fmt.Errorf(
+				"pipe.MemoryWatch requires WithMemoryLimit and/or WithPeakUsageLogging",
+			),
 		})
 		return stage
 	}
 
-	return &memoryWatchStage{
-		nameSuffix: " with memory limit",
-		stage:      limitableStage,
-		watch:      killAtLimitAndObserve(byteLimit, eventHandler),
-	}
-}
-
-func killAtLimitAndObserve(byteLimit uint64, eventHandler func(e *Event)) memoryWatchFunc {
-	return func(ctx context.Context, stage LimitableStage) {
-		var (
-			maxRSS                               uint64
-			samples, errCount, consecutiveErrors int
-			killed                               bool
-		)
-
-		t := time.NewTicker(memoryPollInterval)
-		defer t.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				eventHandler(&Event{
-					Command: stage.Name(),
-					Msg:     "peak memory usage",
-					Context: map[string]interface{}{
-						"max_rss_bytes": maxRSS,
-						"samples":       samples,
-						"errors":        errCount,
-					},
-				})
-				return
-			case <-t.C:
-				if killed {
-					continue
-				}
-
-				rss, err := stage.GetRSSAnon(ctx)
-				if err != nil {
-					if !errors.Is(err, errProcessInfoMissing) {
-						errCount++
-						consecutiveErrors++
-						if consecutiveErrors == 2 {
-							eventHandler(&Event{
-								Command: stage.Name(),
-								Msg:     "error getting RSS",
-								Err:     err,
-							})
-						}
-					} else {
-						consecutiveErrors = 0
-					}
-					continue
-				}
-
-				consecutiveErrors = 0
-				samples++
-				if rss > maxRSS {
-					maxRSS = rss
-				}
-
-				if rss >= byteLimit {
-					func() {
-						// Guarantee the over-limit stage is killed even if
-						// the user's event handler panics.
-						defer stage.Kill(ErrMemoryLimitExceeded)
-						eventHandler(&Event{
-							Command: stage.Name(),
-							Msg:     "stage exceeded allowed memory use",
-							Err:     fmt.Errorf("stage exceeded allowed memory use"),
-							Context: map[string]interface{}{
-								"limit": byteLimit,
-								"used":  rss,
-							},
-						})
-					}()
-					killed = true
-				}
-			}
-		}
-	}
-}
-
-// MemoryObserver watches memory use of the stage and logs the maximum
-// value when the stage exits.
-func MemoryObserver(stage Stage, eventHandler func(e *Event)) Stage {
-	limitableStage, ok := stage.(LimitableStage)
-	if !ok {
-		eventHandler(&Event{
-			Command: stage.Name(),
-			Msg:     "invalid pipe.MemoryObserver usage",
-			Err:     fmt.Errorf("invalid pipe.MemoryObserver usage"),
-		})
-		return stage
-	}
-
-	return &memoryWatchStage{
-		stage: limitableStage,
-		watch: logMaxRSS(eventHandler),
-	}
-}
-
-func logMaxRSS(eventHandler func(e *Event)) memoryWatchFunc {
-
-	return func(ctx context.Context, stage LimitableStage) {
-		var (
-			maxRSS                             uint64
-			samples, errors, consecutiveErrors int
-		)
-
-		t := time.NewTicker(memoryPollInterval)
-		defer t.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				eventHandler(&Event{
-					Command: stage.Name(),
-					Msg:     "peak memory usage",
-					Context: map[string]interface{}{
-						"max_rss_bytes": maxRSS,
-						"samples":       samples,
-						"errors":        errors,
-					},
-				})
-
-				return
-			case <-t.C:
-				rss, err := stage.GetRSSAnon(ctx)
-				if err != nil {
-					errors++
-					consecutiveErrors++
-					if consecutiveErrors == 2 {
-						eventHandler(&Event{
-							Command: stage.Name(),
-							Msg:     "error getting RSS",
-							Err:     err,
-						})
-					}
-					// don't log any more errors until we get rss successfully.
-					continue
-				}
-
-				consecutiveErrors = 0
-				samples++
-				if rss > maxRSS {
-					maxRSS = rss
-				}
-			}
-		}
-	}
+	return &m
 }
 
 type memoryWatchStage struct {
-	nameSuffix string
-	stage      LimitableStage
-	watch      memoryWatchFunc
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	watchErr   error
-}
+	nameSuffix   string
+	stage        LimitableStage
+	eventHandler func(e *Event)
 
-type memoryWatchFunc func(context.Context, LimitableStage)
+	limit   *uint64 // non-nil enables kill-at-limit
+	observe bool    // log peak RSS when the stage exits
+
+	maxRSS            uint64
+	samples           int
+	errCount          int
+	consecutiveErrors int
+
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	watchErr error
+}
 
 var _ LimitableStage = (*memoryWatchStage)(nil)
 
@@ -303,28 +127,6 @@ func (m *memoryWatchStage) Start(
 	return nil
 }
 
-// monitor starts up a goroutine that monitors the memory of `m`. If
-// panicHandler is set, any panic that escapes the user-supplied event handler
-// (via m.watch) is recovered.
-func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicHandler) {
-	ctx, cancel := context.WithCancel(ctx)
-	m.cancel = cancel
-	m.wg.Add(1)
-
-	go func() {
-		defer m.wg.Done()
-		defer func() {
-			if p := recover(); p != nil {
-				if panicHandler == nil {
-					panic(p)
-				}
-				m.watchErr = panicHandler(p)
-			}
-		}()
-		m.watch(ctx, m.stage)
-	}()
-}
-
 func (m *memoryWatchStage) Wait() error {
 	err := m.stage.Wait()
 	m.stopWatching()
@@ -343,7 +145,127 @@ func (m *memoryWatchStage) Kill(err error) {
 	m.stopWatching()
 }
 
+// monitor starts up a goroutine that monitors the memory of `m`. If
+// panicHandler is set, any panic that escapes the user-supplied event handler
+// (via m.watch) is recovered.
+func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicHandler) {
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+	m.wg.Add(1)
+
+	go func() {
+		defer m.wg.Done()
+
+		if panicHandler != nil {
+			defer func() {
+				if p := recover(); p != nil {
+					m.watchErr = panicHandler(p)
+				}
+			}()
+		}
+
+		m.watch(ctx)
+	}()
+}
+
 func (m *memoryWatchStage) stopWatching() {
 	m.cancel()
 	m.wg.Wait()
+}
+
+// watch is a `memoryWatchFunc` that watches the memory usage of the
+// specified `stage`.
+func (m *memoryWatchStage) watch(ctx context.Context) {
+	t := time.NewTicker(memoryPollInterval)
+	defer t.Stop()
+
+watchLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			break watchLoop
+		case <-t.C:
+			if m.update(ctx) {
+				// The stage was killed.
+				break watchLoop
+			}
+		}
+	}
+
+	if m.observe {
+		<-ctx.Done()
+		m.reportPeakUsage()
+	}
+}
+
+// update samples the current memory usage and updates internal stats.
+// Return true if the stage was killed for exceeding the memory limit.
+func (m *memoryWatchStage) update(ctx context.Context) bool {
+	rss, err := m.stage.GetRSSAnon(ctx)
+	if err != nil {
+		m.handleGetRSSError(err)
+		return false
+	}
+
+	m.consecutiveErrors = 0
+	m.samples++
+	if rss > m.maxRSS {
+		m.maxRSS = rss
+	}
+
+	if m.limit != nil && rss >= *m.limit {
+		m.killStage(rss)
+		return true
+	}
+
+	return false
+}
+
+// handleGetRSSError deals with error `err` that happened when trying
+// to get `stage`'s memory usage.
+func (m *memoryWatchStage) handleGetRSSError(err error) {
+	if !errors.Is(err, errProcessInfoMissing) {
+		m.errCount++
+		m.consecutiveErrors++
+		if m.consecutiveErrors == 2 {
+			m.eventHandler(&Event{
+				Command: m.stage.Name(),
+				Msg:     "error getting RSS",
+				Err:     err,
+			})
+		}
+	} else {
+		m.consecutiveErrors = 0
+	}
+}
+
+// killStage kills the stage and reports and event saying what it did.
+func (m *memoryWatchStage) killStage(rss uint64) {
+	// Guarantee the over-limit stage is killed even if
+	// the user's event handler panics.
+	defer m.stage.Kill(ErrMemoryLimitExceeded)
+
+	m.eventHandler(&Event{
+		Command: m.stage.Name(),
+		Msg:     "stage exceeded allowed memory use",
+		Err:     fmt.Errorf("stage exceeded allowed memory use"),
+		Context: map[string]any{
+			"limit": *m.limit,
+			"used":  rss,
+		},
+	})
+}
+
+// reportPeakUsage sends an event reporting the peak usage that has
+// been seen for `stage`.
+func (m *memoryWatchStage) reportPeakUsage() {
+	m.eventHandler(&Event{
+		Command: m.stage.Name(),
+		Msg:     "peak memory usage",
+		Context: map[string]any{
+			"max_rss_bytes": m.maxRSS,
+			"samples":       m.samples,
+			"errors":        m.errCount,
+		},
+	})
 }

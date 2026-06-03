@@ -61,7 +61,7 @@ func testMemoryObserver(t *testing.T, mbs int, stage pipe.Stage) int {
 	logger := log.New(buf, "testMemoryObserver", log.Ldate|log.Ltime)
 
 	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdout(devNull))
-	p.Add(pipe.MemoryObserver(stage, LogEventHandler(logger)))
+	p.Add(pipe.MemoryWatch(stage, LogEventHandler(logger), pipe.WithPeakUsageLogging()))
 	require.NoError(t, p.Start(ctx))
 
 	// Write some nonsense data to less, but don't close stdin until we want it
@@ -168,7 +168,7 @@ func testMemoryLimitWithObserverBelowLimit(t *testing.T, mbs int, stage pipe.Sta
 	logger := log.New(buf, "testMemoryLimitWithObserverBelowLimit", log.Ldate|log.Ltime)
 
 	p := pipe.New(pipe.WithDir("/"), pipe.WithStdin(stdinReader), pipe.WithStdout(devNull))
-	p.Add(pipe.MemoryLimitWithObserver(stage, 100*1024*1024*1024, LogEventHandler(logger)))
+	p.Add(pipe.MemoryWatch(stage, LogEventHandler(logger), pipe.WithMemoryLimit(100*1024*1024*1024), pipe.WithPeakUsageLogging()))
 	require.NoError(t, p.Start(ctx))
 
 	var bytes [1_000_000]byte
@@ -218,7 +218,7 @@ func testMemoryLimit(t *testing.T, mbs int, limit uint64, stage pipe.Stage) (str
 				return nil
 			},
 		),
-		pipe.MemoryLimit(stage, limit, LogEventHandler(logger)),
+		pipe.MemoryWatch(stage, LogEventHandler(logger), pipe.WithMemoryLimit(limit)),
 	)
 	require.NoError(t, p.Start(ctx))
 
@@ -252,11 +252,27 @@ func testMemoryLimitWithObserver(t *testing.T, mbs int, limit uint64, stage pipe
 				return nil
 			},
 		),
-		pipe.MemoryLimitWithObserver(stage, limit, LogEventHandler(logger)),
+		pipe.MemoryWatch(stage, LogEventHandler(logger), pipe.WithMemoryLimit(limit), pipe.WithPeakUsageLogging()),
 	)
 	require.NoError(t, p.Start(ctx))
 
 	err = p.Wait()
 
 	return buf.String(), err
+}
+
+// TestMemoryWatchRequiresAnOption verifies that MemoryWatch without
+// WithMemoryLimit or WithPeakUsageLogging is rejected: it reports an
+// invalid-usage event and returns the stage unwrapped (no watcher).
+func TestMemoryWatchRequiresAnOption(t *testing.T) {
+	stage := pipe.Command("true")
+
+	var events []*pipe.Event
+	got := pipe.MemoryWatch(stage, func(e *pipe.Event) {
+		events = append(events, e)
+	})
+
+	require.Same(t, stage, got, "expected the input stage returned unwrapped")
+	require.Len(t, events, 1)
+	require.Contains(t, events[0].Msg, "invalid pipe.MemoryWatch usage")
 }
