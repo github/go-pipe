@@ -25,20 +25,21 @@ type LimitableStage interface {
 }
 
 // MemoryWatchOption configures a MemoryWatch stage.
-type MemoryWatchOption func(*memoryWatcher)
+type MemoryWatchOption func(*memoryWatchStage)
 
 // WithMemoryLimit makes MemoryWatch kill the stage when its RSS exceeds
 // byteLimit.
 func WithMemoryLimit(byteLimit uint64) MemoryWatchOption {
-	return func(mw *memoryWatcher) {
+	return func(mw *memoryWatchStage) {
 		mw.limit = &byteLimit
+		mw.nameSuffix = " with memory limit"
 	}
 }
 
 // WithPeakUsageLogging makes MemoryWatch log the peak RSS when the stage
 // exits.
 func WithPeakUsageLogging() MemoryWatchOption {
-	return func(mw *memoryWatcher) {
+	return func(mw *memoryWatchStage) {
 		mw.observe = true
 	}
 }
@@ -64,7 +65,7 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 		return stage
 	}
 
-	mw := memoryWatcher{
+	mw := memoryWatchStage{
 		stage:        limitableStage,
 		eventHandler: eventHandler,
 	}
@@ -83,34 +84,12 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 		return stage
 	}
 
-	nameSuffix := ""
-	if mw.limit != nil {
-		nameSuffix = " with memory limit"
-	}
-
-	return &memoryWatchStage{
-		nameSuffix: nameSuffix,
-		stage:      limitableStage,
-		watch:      mw.watch,
-	}
-}
-
-type memoryWatcher struct {
-	stage        LimitableStage
-	eventHandler func(e *Event)
-
-	limit   *uint64 // non-nil enables kill-at-limit
-	observe bool    // log peak RSS when the stage exits
-
-	maxRSS            uint64
-	samples           int
-	errCount          int
-	consecutiveErrors int
+	return &mw
 }
 
 // watch is a `memoryWatchFunc` that watches the memory usage of the
 // specified `stage`.
-func (mw *memoryWatcher) watch(ctx context.Context) {
+func (mw *memoryWatchStage) watch(ctx context.Context) {
 	t := time.NewTicker(memoryPollInterval)
 	defer t.Stop()
 
@@ -135,7 +114,7 @@ watchLoop:
 
 // update samples the current memory usage and updates internal stats.
 // Return true if the stage was killed for exceeding the memory limit.
-func (mw *memoryWatcher) update(ctx context.Context) bool {
+func (mw *memoryWatchStage) update(ctx context.Context) bool {
 	rss, err := mw.stage.GetRSSAnon(ctx)
 	if err != nil {
 		mw.handleGetRSSError(err)
@@ -158,7 +137,7 @@ func (mw *memoryWatcher) update(ctx context.Context) bool {
 
 // handleGetRSSError deals with error `err` that happened when trying
 // to get `stage`'s memory usage.
-func (mw *memoryWatcher) handleGetRSSError(err error) {
+func (mw *memoryWatchStage) handleGetRSSError(err error) {
 	if !errors.Is(err, errProcessInfoMissing) {
 		mw.errCount++
 		mw.consecutiveErrors++
@@ -175,7 +154,7 @@ func (mw *memoryWatcher) handleGetRSSError(err error) {
 }
 
 // killStage kills the stage and reports and event saying what it did.
-func (mw *memoryWatcher) killStage(rss uint64) {
+func (mw *memoryWatchStage) killStage(rss uint64) {
 	// Guarantee the over-limit stage is killed even if
 	// the user's event handler panics.
 	defer mw.stage.Kill(ErrMemoryLimitExceeded)
@@ -193,7 +172,7 @@ func (mw *memoryWatcher) killStage(rss uint64) {
 
 // reportPeakUsage sends an event reporting the peak usage that has
 // been seen for `stage`.
-func (mw *memoryWatcher) reportPeakUsage() {
+func (mw *memoryWatchStage) reportPeakUsage() {
 	mw.eventHandler(&Event{
 		Command: mw.stage.Name(),
 		Msg:     "peak memory usage",
@@ -206,15 +185,22 @@ func (mw *memoryWatcher) reportPeakUsage() {
 }
 
 type memoryWatchStage struct {
-	nameSuffix string
-	stage      LimitableStage
-	watch      memoryWatchFunc
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	watchErr   error
-}
+	nameSuffix   string
+	stage        LimitableStage
+	eventHandler func(e *Event)
 
-type memoryWatchFunc func(context.Context)
+	limit   *uint64 // non-nil enables kill-at-limit
+	observe bool    // log peak RSS when the stage exits
+
+	maxRSS            uint64
+	samples           int
+	errCount          int
+	consecutiveErrors int
+
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	watchErr error
+}
 
 var _ LimitableStage = (*memoryWatchStage)(nil)
 

@@ -78,7 +78,7 @@ func TestMemoryWatchStagePanicWithHandlerSurfaced(t *testing.T) {
 // the panic would fail the test rather than hang on the ticker loop.
 func TestMemoryWatchStagePanicWithoutHandlerPropagates(t *testing.T) {
 	limit := uint64(1)
-	mw := memoryWatcher{
+	mw := memoryWatchStage{
 		stage:        fakeLimitableStage{done: make(chan struct{})},
 		eventHandler: func(*Event) {},
 		limit:        &limit,
