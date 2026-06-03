@@ -30,17 +30,17 @@ type MemoryWatchOption func(*memoryWatchStage)
 // WithMemoryLimit makes MemoryWatch kill the stage when its RSS exceeds
 // byteLimit.
 func WithMemoryLimit(byteLimit uint64) MemoryWatchOption {
-	return func(mw *memoryWatchStage) {
-		mw.limit = &byteLimit
-		mw.nameSuffix = " with memory limit"
+	return func(m *memoryWatchStage) {
+		m.limit = &byteLimit
+		m.nameSuffix = " with memory limit"
 	}
 }
 
 // WithPeakUsageLogging makes MemoryWatch log the peak RSS when the stage
 // exits.
 func WithPeakUsageLogging() MemoryWatchOption {
-	return func(mw *memoryWatchStage) {
-		mw.observe = true
+	return func(m *memoryWatchStage) {
+		m.observe = true
 	}
 }
 
@@ -65,15 +65,15 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 		return stage
 	}
 
-	mw := memoryWatchStage{
+	m := memoryWatchStage{
 		stage:        limitableStage,
 		eventHandler: eventHandler,
 	}
 	for _, opt := range opts {
-		opt(&mw)
+		opt(&m)
 	}
 
-	if mw.limit == nil && !mw.observe {
+	if m.limit == nil && !m.observe {
 		eventHandler(&Event{
 			Command: stage.Name(),
 			Msg:     "invalid pipe.MemoryWatch usage",
@@ -84,12 +84,12 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 		return stage
 	}
 
-	return &mw
+	return &m
 }
 
 // watch is a `memoryWatchFunc` that watches the memory usage of the
 // specified `stage`.
-func (mw *memoryWatchStage) watch(ctx context.Context) {
+func (m *memoryWatchStage) watch(ctx context.Context) {
 	t := time.NewTicker(memoryPollInterval)
 	defer t.Stop()
 
@@ -99,36 +99,36 @@ watchLoop:
 		case <-ctx.Done():
 			break watchLoop
 		case <-t.C:
-			if mw.update(ctx) {
+			if m.update(ctx) {
 				// The stage was killed.
 				break watchLoop
 			}
 		}
 	}
 
-	if mw.observe {
+	if m.observe {
 		<-ctx.Done()
-		mw.reportPeakUsage()
+		m.reportPeakUsage()
 	}
 }
 
 // update samples the current memory usage and updates internal stats.
 // Return true if the stage was killed for exceeding the memory limit.
-func (mw *memoryWatchStage) update(ctx context.Context) bool {
-	rss, err := mw.stage.GetRSSAnon(ctx)
+func (m *memoryWatchStage) update(ctx context.Context) bool {
+	rss, err := m.stage.GetRSSAnon(ctx)
 	if err != nil {
-		mw.handleGetRSSError(err)
+		m.handleGetRSSError(err)
 		return false
 	}
 
-	mw.consecutiveErrors = 0
-	mw.samples++
-	if rss > mw.maxRSS {
-		mw.maxRSS = rss
+	m.consecutiveErrors = 0
+	m.samples++
+	if rss > m.maxRSS {
+		m.maxRSS = rss
 	}
 
-	if mw.limit != nil && rss >= *mw.limit {
-		mw.killStage(rss)
+	if m.limit != nil && rss >= *m.limit {
+		m.killStage(rss)
 		return true
 	}
 
@@ -137,34 +137,34 @@ func (mw *memoryWatchStage) update(ctx context.Context) bool {
 
 // handleGetRSSError deals with error `err` that happened when trying
 // to get `stage`'s memory usage.
-func (mw *memoryWatchStage) handleGetRSSError(err error) {
+func (m *memoryWatchStage) handleGetRSSError(err error) {
 	if !errors.Is(err, errProcessInfoMissing) {
-		mw.errCount++
-		mw.consecutiveErrors++
-		if mw.consecutiveErrors == 2 {
-			mw.eventHandler(&Event{
-				Command: mw.stage.Name(),
+		m.errCount++
+		m.consecutiveErrors++
+		if m.consecutiveErrors == 2 {
+			m.eventHandler(&Event{
+				Command: m.stage.Name(),
 				Msg:     "error getting RSS",
 				Err:     err,
 			})
 		}
 	} else {
-		mw.consecutiveErrors = 0
+		m.consecutiveErrors = 0
 	}
 }
 
 // killStage kills the stage and reports and event saying what it did.
-func (mw *memoryWatchStage) killStage(rss uint64) {
+func (m *memoryWatchStage) killStage(rss uint64) {
 	// Guarantee the over-limit stage is killed even if
 	// the user's event handler panics.
-	defer mw.stage.Kill(ErrMemoryLimitExceeded)
+	defer m.stage.Kill(ErrMemoryLimitExceeded)
 
-	mw.eventHandler(&Event{
-		Command: mw.stage.Name(),
+	m.eventHandler(&Event{
+		Command: m.stage.Name(),
 		Msg:     "stage exceeded allowed memory use",
 		Err:     fmt.Errorf("stage exceeded allowed memory use"),
 		Context: map[string]any{
-			"limit": *mw.limit,
+			"limit": *m.limit,
 			"used":  rss,
 		},
 	})
@@ -172,14 +172,14 @@ func (mw *memoryWatchStage) killStage(rss uint64) {
 
 // reportPeakUsage sends an event reporting the peak usage that has
 // been seen for `stage`.
-func (mw *memoryWatchStage) reportPeakUsage() {
-	mw.eventHandler(&Event{
-		Command: mw.stage.Name(),
+func (m *memoryWatchStage) reportPeakUsage() {
+	m.eventHandler(&Event{
+		Command: m.stage.Name(),
 		Msg:     "peak memory usage",
 		Context: map[string]any{
-			"max_rss_bytes": mw.maxRSS,
-			"samples":       mw.samples,
-			"errors":        mw.errCount,
+			"max_rss_bytes": m.maxRSS,
+			"samples":       m.samples,
+			"errors":        m.errCount,
 		},
 	})
 }
