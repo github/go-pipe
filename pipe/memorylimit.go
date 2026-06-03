@@ -87,6 +87,92 @@ func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOp
 	return &m
 }
 
+type memoryWatchStage struct {
+	nameSuffix   string
+	stage        LimitableStage
+	eventHandler func(e *Event)
+
+	limit   *uint64 // non-nil enables kill-at-limit
+	observe bool    // log peak RSS when the stage exits
+
+	maxRSS            uint64
+	samples           int
+	errCount          int
+	consecutiveErrors int
+
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	watchErr error
+}
+
+var _ LimitableStage = (*memoryWatchStage)(nil)
+
+func (m *memoryWatchStage) Name() string {
+	return m.stage.Name() + m.nameSuffix
+}
+
+func (m *memoryWatchStage) Preferences() StagePreferences {
+	return m.stage.Preferences()
+}
+
+func (m *memoryWatchStage) Start(
+	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions,
+) error {
+	if err := m.stage.Start(ctx, env, stdin, stdout, opts); err != nil {
+		return err
+	}
+
+	m.monitor(ctx, opts.PanicHandler)
+
+	return nil
+}
+
+func (m *memoryWatchStage) Wait() error {
+	err := m.stage.Wait()
+	m.stopWatching()
+	if err == nil {
+		err = m.watchErr // non-nil if panicHandler() returned anything
+	}
+	return err
+}
+
+func (m *memoryWatchStage) GetRSSAnon(ctx context.Context) (uint64, error) {
+	return m.stage.GetRSSAnon(ctx)
+}
+
+func (m *memoryWatchStage) Kill(err error) {
+	m.stage.Kill(err)
+	m.stopWatching()
+}
+
+// monitor starts up a goroutine that monitors the memory of `m`. If
+// panicHandler is set, any panic that escapes the user-supplied event handler
+// (via m.watch) is recovered.
+func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicHandler) {
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+	m.wg.Add(1)
+
+	go func() {
+		defer m.wg.Done()
+
+		if panicHandler != nil {
+			defer func() {
+				if p := recover(); p != nil {
+					m.watchErr = panicHandler(p)
+				}
+			}()
+		}
+
+		m.watch(ctx)
+	}()
+}
+
+func (m *memoryWatchStage) stopWatching() {
+	m.cancel()
+	m.wg.Wait()
+}
+
 // watch is a `memoryWatchFunc` that watches the memory usage of the
 // specified `stage`.
 func (m *memoryWatchStage) watch(ctx context.Context) {
@@ -182,90 +268,4 @@ func (m *memoryWatchStage) reportPeakUsage() {
 			"errors":        m.errCount,
 		},
 	})
-}
-
-type memoryWatchStage struct {
-	nameSuffix   string
-	stage        LimitableStage
-	eventHandler func(e *Event)
-
-	limit   *uint64 // non-nil enables kill-at-limit
-	observe bool    // log peak RSS when the stage exits
-
-	maxRSS            uint64
-	samples           int
-	errCount          int
-	consecutiveErrors int
-
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	watchErr error
-}
-
-var _ LimitableStage = (*memoryWatchStage)(nil)
-
-func (m *memoryWatchStage) Name() string {
-	return m.stage.Name() + m.nameSuffix
-}
-
-func (m *memoryWatchStage) Preferences() StagePreferences {
-	return m.stage.Preferences()
-}
-
-func (m *memoryWatchStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions,
-) error {
-	if err := m.stage.Start(ctx, env, stdin, stdout, opts); err != nil {
-		return err
-	}
-
-	m.monitor(ctx, opts.PanicHandler)
-
-	return nil
-}
-
-// monitor starts up a goroutine that monitors the memory of `m`. If
-// panicHandler is set, any panic that escapes the user-supplied event handler
-// (via m.watch) is recovered.
-func (m *memoryWatchStage) monitor(ctx context.Context, panicHandler StagePanicHandler) {
-	ctx, cancel := context.WithCancel(ctx)
-	m.cancel = cancel
-	m.wg.Add(1)
-
-	go func() {
-		defer m.wg.Done()
-
-		if panicHandler != nil {
-			defer func() {
-				if p := recover(); p != nil {
-					m.watchErr = panicHandler(p)
-				}
-			}()
-		}
-
-		m.watch(ctx)
-	}()
-}
-
-func (m *memoryWatchStage) Wait() error {
-	err := m.stage.Wait()
-	m.stopWatching()
-	if err == nil {
-		err = m.watchErr // non-nil if panicHandler() returned anything
-	}
-	return err
-}
-
-func (m *memoryWatchStage) GetRSSAnon(ctx context.Context) (uint64, error) {
-	return m.stage.GetRSSAnon(ctx)
-}
-
-func (m *memoryWatchStage) Kill(err error) {
-	m.stage.Kill(err)
-	m.stopWatching()
-}
-
-func (m *memoryWatchStage) stopWatching() {
-	m.cancel()
-	m.wg.Wait()
 }
