@@ -19,24 +19,49 @@ import (
 // to synchronize any data access aside from reading and writing.
 type StageFunc func(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) error
 
+// FunctionOption configures a Function stage.
+type FunctionOption func(*goStage)
+
+// ForbidStdin returns a FunctionOption declaring that the stage must not be
+// connected to stdin.
+func ForbidStdin() FunctionOption {
+	return func(s *goStage) {
+		s.requirements.Stdin = StreamForbidden
+	}
+}
+
+// ForbidStdout returns a FunctionOption declaring that the stage must not be
+// connected to stdout.
+func ForbidStdout() FunctionOption {
+	return func(s *goStage) {
+		s.requirements.Stdout = StreamForbidden
+	}
+}
+
 // Function returns a pipeline `Stage` that will run a `StageFunc` in
 // a separate goroutine to process the data. See `StageFunc` for more
 // information.
-func Function(name string, f StageFunc) Stage {
-	return &goStage{
-		name: name,
-		f:    f,
-		done: make(chan struct{}),
+func Function(name string, f StageFunc, opts ...FunctionOption) Stage {
+	stage := &goStage{
+		name:         name,
+		f:            f,
+		done:         make(chan struct{}),
+		requirements: StageRequirements{},
 	}
+	for _, opt := range opts {
+		opt(stage)
+	}
+	return stage
 }
 
 // goStage is a `Stage` that does its work by running an arbitrary
 // `stageFunc` in a goroutine.
 type goStage struct {
-	name string
-	f    StageFunc
-	done chan struct{}
-	err  error
+	name         string
+	f            StageFunc
+	done         chan struct{}
+	requirements StageRequirements
+	err          error
 }
 
 var _ Stage = (*goStage)(nil)
@@ -46,7 +71,7 @@ func (s *goStage) Name() string {
 }
 
 func (s *goStage) Requirements() StageRequirements {
-	return StageRequirements{}
+	return s.requirements
 }
 
 func (s *goStage) Start(

@@ -221,8 +221,24 @@ type stageStarter struct {
 	stdoutCloser io.Closer
 }
 
-func checkStreamRequirements(s Stage, stdinConnected, stdoutConnected bool) error {
-	requirements := s.Requirements()
+func checkStreamRequirement(requirement StreamRequirement) error {
+	switch requirement {
+	case StreamOptional, StreamForbidden:
+		return nil
+	default:
+		return fmt.Errorf("invalid stream requirement %d", requirement)
+	}
+}
+
+func checkStreamRequirements(
+	s Stage, requirements StageRequirements, stdinConnected, stdoutConnected bool,
+) error {
+	if err := checkStreamRequirement(requirements.Stdin); err != nil {
+		return fmt.Errorf("stdin: %w", err)
+	}
+	if err := checkStreamRequirement(requirements.Stdout); err != nil {
+		return fmt.Errorf("stdout: %w", err)
+	}
 	if requirements.Stdin == StreamForbidden && stdinConnected {
 		return fmt.Errorf("stage %q forbids stdin, but stdin is connected", s.Name())
 	}
@@ -230,6 +246,21 @@ func checkStreamRequirements(s Stage, stdinConnected, stdoutConnected bool) erro
 		return fmt.Errorf("stage %q forbids stdout, but stdout is connected", s.Name())
 	}
 	return nil
+}
+
+func (p *Pipeline) abortBeforeStart(s Stage, err error) error {
+	if p.stdoutCloser != nil {
+		_ = p.stdoutCloser.Close()
+	}
+	p.cancel()
+	p.eventHandler(&Event{
+		Command: s.Name(),
+		Msg:     "failed to start pipeline stage",
+		Err:     err,
+	})
+	return fmt.Errorf(
+		"starting pipeline stage %q: %w", s.Name(), err,
+	)
 }
 
 func (p *Pipeline) stageOptions() StageOptions {
@@ -277,6 +308,18 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// Collect information about each stage's type and requirements:
 	for i, s := range p.stages {
 		stageStarters[i].requirements = s.Requirements()
+	}
+
+	for i, s := range p.stages {
+		err := checkStreamRequirements(
+			s,
+			stageStarters[i].requirements,
+			i > 0 || p.stdin != nil,
+			i < len(p.stages)-1 || p.stdout != nil,
+		)
+		if err != nil {
+			return p.abortBeforeStart(s, err)
+		}
 	}
 
 	if p.stdin != nil {
@@ -328,10 +371,6 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		ss := &stageStarters[i]
 		nextSS := &stageStarters[i+1]
 
-		if err := checkStreamRequirements(s, ss.stdin != nil, true); err != nil {
-			return abort(i, err)
-		}
-
 		// We need to generate a pipe pair for this stage to use
 		// to communicate with its successor:
 		if ss.requirements.StdoutNeedsFile || nextSS.requirements.StdinNeedsFile {
@@ -369,10 +408,6 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		i := len(p.stages) - 1
 		s := p.stages[i]
 		ss := &stageStarters[i]
-
-		if err := checkStreamRequirements(s, ss.stdin != nil, ss.stdout != nil); err != nil {
-			return abort(i, err)
-		}
 
 		if err := s.Start(
 			ctx, p.stageOptions(),
