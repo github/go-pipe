@@ -79,9 +79,9 @@ type Stage interface {
 	// Name returns the name of the stage.
 	Name() string
 
-	// Preferences() returns this stage's preferences regarding how it
-	// should be run.
-	Preferences() StagePreferences
+	// Requirements returns this stage's requirements regarding how its
+	// stdin and stdout pipes should be created.
+	Requirements() StageRequirements
 
 	// Start starts the stage in the background, in the environment
 	// described by `opts.Env`, using `stdin` to provide its input and
@@ -124,34 +124,17 @@ type StageOptions struct {
 // StagePanicHandler is a function that handles panics in a pipeline's stages.
 type StagePanicHandler func(p any) error
 
-// StagePreferences is the way that a `Stage` indicates its
-// preferences about how it is run. This is used within
-// `pipe.Pipeline` to decide when to use `os.Pipe()` vs. `io.Pipe()`
-// for creating the pipes between stages.
-type StagePreferences struct {
-	StdinPreference  IOPreference
-	StdoutPreference IOPreference
+// StageRequirements describes what a Stage needs from the pipes connected to
+// its stdin and stdout. The zero value is correct for stages that are happy
+// with arbitrary io.Reader/io.Writer streams, such as Function stages.
+type StageRequirements struct {
+	// StdinNeedsFile indicates that the stage requires stdin to be backed by an
+	// *os.File (a real file descriptor), for example so an external command can
+	// read from the descriptor directly.
+	StdinNeedsFile bool
+
+	// StdoutNeedsFile indicates that the stage requires stdout to be backed by
+	// an *os.File (a real file descriptor), for example so an external command
+	// can write to the descriptor directly.
+	StdoutNeedsFile bool
 }
-
-// IOPreference describes what type of stdin / stdout a stage would
-// prefer.
-//
-// External commands prefer `*os.File`s (such as those produced by
-// `os.Pipe()`) as their stdin and stdout, because those can be passed
-// directly by the external process without any extra copying and also
-// simplify the semantics around process termination. Go function
-// stages are typically happy with any `io.Reader` (such as the read
-// end produced by `io.Pipe()`), which can be more efficient because
-// traffic through an `io.Pipe()` happens entirely in userspace.
-type IOPreference int
-
-const (
-	// IOPreferenceUndefined indicates that the stage doesn't care
-	// what form the specified stdin / stdout takes (i.e., any old
-	// `io.Reader` / `io.Writer` is just fine).
-	IOPreferenceUndefined IOPreference = iota
-
-	// IOPreferenceFile indicates that the stage would prefer for the
-	// specified stdin / stdout to be an `*os.File`, to avoid copying.
-	IOPreferenceFile
-)

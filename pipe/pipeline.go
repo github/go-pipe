@@ -214,7 +214,7 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 }
 
 type stageStarter struct {
-	prefs        StagePreferences
+	requirements StageRequirements
 	stdin        io.Reader
 	stdinCloser  io.Closer
 	stdout       io.Writer
@@ -260,12 +260,12 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// We need to decide how to start the stages, especially what
 	// pipes to use to connect adjacent stages (`os.Pipe()` vs.
-	// `io.Pipe()`) based on the two stages' preferences.
+	// `io.Pipe()`) based on the two stages' requirements.
 	stageStarters := make([]stageStarter, len(p.stages), len(p.stages)+1)
 
-	// Collect information about each stage's type and preferences:
+	// Collect information about each stage's type and requirements:
 	for i, s := range p.stages {
-		stageStarters[i].prefs = s.Preferences()
+		stageStarters[i].requirements = s.Requirements()
 	}
 
 	if p.stdin != nil {
@@ -319,8 +319,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 		// We need to generate a pipe pair for this stage to use
 		// to communicate with its successor:
-		if ss.prefs.StdoutPreference == IOPreferenceFile ||
-			nextSS.prefs.StdinPreference == IOPreferenceFile {
+		if ss.requirements.StdoutNeedsFile || nextSS.requirements.StdinNeedsFile {
 			// Use an OS-level pipe for the communication:
 			nextStdin, stdout, err := os.Pipe()
 			if err != nil {

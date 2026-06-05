@@ -69,10 +69,10 @@ func (s *commandStage) Name() string {
 	return s.name
 }
 
-func (s *commandStage) Preferences() StagePreferences {
-	return StagePreferences{
-		StdinPreference:  IOPreferenceFile,
-		StdoutPreference: IOPreferenceFile,
+func (s *commandStage) Requirements() StageRequirements {
+	return StageRequirements{
+		StdinNeedsFile:  true,
+		StdoutNeedsFile: true,
 	}
 }
 

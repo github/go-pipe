@@ -45,11 +45,8 @@ func (s *goStage) Name() string {
 	return s.name
 }
 
-func (s *goStage) Preferences() StagePreferences {
-	return StagePreferences{
-		StdinPreference:  IOPreferenceUndefined,
-		StdoutPreference: IOPreferenceUndefined,
-	}
+func (s *goStage) Requirements() StageRequirements {
+	return StageRequirements{}
 }
 
 func (s *goStage) Start(

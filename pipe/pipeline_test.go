@@ -594,11 +594,8 @@ func (s ErrorStartingStage) Name() string {
 	return "errorStartingStage"
 }
 
-func (s ErrorStartingStage) Preferences() pipe.StagePreferences {
-	return pipe.StagePreferences{
-		StdinPreference:  pipe.IOPreferenceUndefined,
-		StdoutPreference: pipe.IOPreferenceUndefined,
-	}
+func (s ErrorStartingStage) Requirements() pipe.StageRequirements {
+	return pipe.StageRequirements{}
 }
 
 func (s ErrorStartingStage) Start(

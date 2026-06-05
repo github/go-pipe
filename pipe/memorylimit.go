@@ -111,8 +111,8 @@ func (m *memoryWatchStage) Name() string {
 	return m.stage.Name() + m.nameSuffix
 }
 
-func (m *memoryWatchStage) Preferences() StagePreferences {
-	return m.stage.Preferences()
+func (m *memoryWatchStage) Requirements() StageRequirements {
+	return m.stage.Requirements()
 }
 
 func (m *memoryWatchStage) Start(

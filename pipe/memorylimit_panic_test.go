@@ -20,8 +20,8 @@ type fakeLimitableStage struct {
 	done chan struct{}
 }
 
-func (fakeLimitableStage) Name() string                  { return "fake" }
-func (fakeLimitableStage) Preferences() StagePreferences { return StagePreferences{} }
+func (fakeLimitableStage) Name() string                    { return "fake" }
+func (fakeLimitableStage) Requirements() StageRequirements { return StageRequirements{} }
 func (fakeLimitableStage) Start(
 	context.Context, StageOptions, io.Reader, io.Closer, io.Writer, io.Closer,
 ) error {
@@ -104,8 +104,8 @@ func newKillTrackingStage() *killTrackingStage {
 	}
 }
 
-func (*killTrackingStage) Name() string                  { return "kill-tracking" }
-func (*killTrackingStage) Preferences() StagePreferences { return StagePreferences{} }
+func (*killTrackingStage) Name() string                    { return "kill-tracking" }
+func (*killTrackingStage) Requirements() StageRequirements { return StageRequirements{} }
 func (*killTrackingStage) Start(
 	context.Context, StageOptions, io.Reader, io.Closer, io.Writer, io.Closer,
 ) error {
