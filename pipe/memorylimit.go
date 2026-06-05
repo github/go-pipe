@@ -117,10 +117,10 @@ func (m *memoryWatchStage) Requirements() StageRequirements {
 
 func (m *memoryWatchStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, stdinCloser io.Closer,
-	stdout io.Writer, stdoutCloser io.Closer,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
-	if err := m.stage.Start(ctx, opts, stdin, stdinCloser, stdout, stdoutCloser); err != nil {
+	if err := m.stage.Start(ctx, opts, stdin, closeStdin, stdout, closeStdout); err != nil {
 		return err
 	}
 

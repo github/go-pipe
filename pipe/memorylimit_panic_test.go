@@ -23,7 +23,7 @@ type fakeLimitableStage struct {
 func (fakeLimitableStage) Name() string                    { return "fake" }
 func (fakeLimitableStage) Requirements() StageRequirements { return StageRequirements{} }
 func (fakeLimitableStage) Start(
-	context.Context, StageOptions, io.Reader, io.Closer, io.Writer, io.Closer,
+	context.Context, StageOptions, io.Reader, bool, io.Writer, bool,
 ) error {
 	return nil
 }
@@ -56,7 +56,7 @@ func TestMemoryWatchStagePanicWithHandlerSurfaced(t *testing.T) {
 		PanicHandler: func(p any) error { return fmt.Errorf("recovered: %v", p) },
 	}
 
-	if err := ms.Start(context.Background(), opts, nil, nil, nil, nil); err != nil {
+	if err := ms.Start(context.Background(), opts, nil, false, nil, false); err != nil {
 		t.Fatalf("Start returned unexpected error: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func newKillTrackingStage() *killTrackingStage {
 func (*killTrackingStage) Name() string                    { return "kill-tracking" }
 func (*killTrackingStage) Requirements() StageRequirements { return StageRequirements{} }
 func (*killTrackingStage) Start(
-	context.Context, StageOptions, io.Reader, io.Closer, io.Writer, io.Closer,
+	context.Context, StageOptions, io.Reader, bool, io.Writer, bool,
 ) error {
 	return nil
 }
@@ -139,7 +139,7 @@ func TestMemoryLimitKillsEvenIfEventHandlerPanics(t *testing.T) {
 		PanicHandler: func(p any) error { return fmt.Errorf("recovered: %v", p) },
 	}
 
-	if err := ms.Start(context.Background(), opts, nil, nil, nil, nil); err != nil {
+	if err := ms.Start(context.Background(), opts, nil, false, nil, false); err != nil {
 		t.Fatalf("Start returned unexpected error: %v", err)
 	}
 

@@ -104,16 +104,16 @@ func (s *pipeSniffingStage) Requirements() pipe.StageRequirements {
 
 func (s *pipeSniffingStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	stdin io.Reader, stdinCloser io.Closer,
-	stdout io.Writer, stdoutCloser io.Closer,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
 	s.stdin = stdin
-	if stdinCloser != nil {
-		_ = stdinCloser.Close()
+	if closeStdin {
+		_ = stdin.(io.Closer).Close()
 	}
 	s.stdout = stdout
-	if stdoutCloser != nil {
-		_ = stdoutCloser.Close()
+	if closeStdout {
+		_ = stdout.(io.Closer).Close()
 	}
 	return nil
 }

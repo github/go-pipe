@@ -9,8 +9,10 @@ import (
 
 // StageFunc is a function that can be used to power a `goStage`. It
 // should read its input from `stdin` and write its output to
-// `stdout`. `stdin` and `stdout` will be closed automatically (if
-// non-nil) once the function returns.
+// `stdout`. The Function stage closes `stdin` and `stdout` after the
+// function returns only when the pipeline gave the stage ownership of
+// those streams; StageFunc implementations should not close them
+// directly.
 //
 // Neither `stdin` nor `stdout` are necessarily buffered. If the
 // `StageFunc` requires buffering, it needs to arrange that itself.
@@ -76,9 +78,12 @@ func (s *goStage) Requirements() StageRequirements {
 
 func (s *goStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, stdinCloser io.Closer,
-	stdout io.Writer, stdoutCloser io.Closer,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
+	stdinCloser := ownedCloser(stdin, closeStdin)
+	stdoutCloser := ownedCloser(stdout, closeStdout)
+
 	r := stdin
 	if r == nil {
 		// treat nil as empty input.

@@ -392,8 +392,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		}
 		if err := s.Start(
 			ctx, p.stageOptions(),
-			ss.stdin, ss.stdinCloser,
-			ss.stdout, ss.stdoutCloser,
+			ss.stdin, ss.stdinCloser != nil,
+			ss.stdout, ss.stdoutCloser != nil,
 		); err != nil {
 			nextSS.stdinCloser.Close()
 			ss.stdoutCloser.Close()
@@ -411,8 +411,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 		if err := s.Start(
 			ctx, p.stageOptions(),
-			ss.stdin, ss.stdinCloser,
-			ss.stdout, ss.stdoutCloser,
+			ss.stdin, ss.stdinCloser != nil,
+			ss.stdout, ss.stdoutCloser != nil,
 		); err != nil {
 			return abort(i, err)
 		}

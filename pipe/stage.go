@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"context"
+	"fmt"
 	"io"
 )
 
@@ -12,11 +13,11 @@ import (
 //
 // A `Stage` as a whole is responsible for closing its end of stdin
 // and stdout (assuming that `Start()` returns successfully) if the
-// corresponding closer passed to `Start()` is non-nil. Its doing so
+// corresponding close flag passed to `Start()` is true. Its doing so
 // tells the previous/next stage that it is done reading/writing data,
 // which can affect their behavior. Therefore, it should close each
 // one as soon as it is done with it. If the caller wants to suppress
-// the closing of stdin/stdout, it passes a nil closer.
+// the closing of stdin/stdout, it passes a false close flag.
 //
 // How this should be done depends on whether stdin/stdout are of type
 // `*os.File`.
@@ -65,7 +66,7 @@ import (
 // From the point of view of the pipeline as a whole, if stdin is
 // provided by the user (`WithStdin()`), then we don't want the first
 // stage to close it at all, whether it's an `*os.File` or not. The
-// pipeline communicates this by passing a nil stdin closer when it
+// pipeline communicates this by passing closeStdin=false when it
 // starts that stage. For stdout, it depends on whether the user
 // supplied it using `WithStdout()` or `WithStdoutCloser()`.
 //
@@ -87,23 +88,35 @@ type Stage interface {
 	// described by `opts.Env`, using `stdin` to provide its input and
 	// `stdout` to collect its output. (`stdin`/`stdout` might be set
 	// to `nil` if the stage is to receive no input, which might be the
-	// case for the first/last stage in a pipeline.) If `stdinCloser` or
-	// `stdoutCloser` is non-nil, the stage is responsible for closing
-	// it. See the `Stage` type comment for more information about
-	// responsibility for closing stdin and stdout.
+	// case for the first/last stage in a pipeline.) If `closeStdin` or
+	// `closeStdout` is true, the stage is responsible for closing the
+	// corresponding stream. A stream with a true close flag must
+	// implement `io.Closer`. See the `Stage` type comment for more
+	// information about responsibility for closing stdin and stdout.
 	//
 	// If `Start()` returns without an error, `Wait()` must also be
 	// called, to allow all resources to be freed.
 	Start(
 		ctx context.Context, opts StageOptions,
-		stdin io.Reader, stdinCloser io.Closer,
-		stdout io.Writer, stdoutCloser io.Closer,
+		stdin io.Reader, closeStdin bool,
+		stdout io.Writer, closeStdout bool,
 	) error
 
 	// Wait waits for the stage to be done, either because it has
 	// finished or because it has been killed due to the expiration of
 	// the context passed to `Start()`.
 	Wait() error
+}
+
+func ownedCloser(stream any, owned bool) io.Closer {
+	if !owned {
+		return nil
+	}
+	closer, ok := stream.(io.Closer)
+	if !ok {
+		panic(fmt.Sprintf("stage asked to close %T, which does not implement io.Closer", stream))
+	}
+	return closer
 }
 
 // StageOptions carries everything (other than `ctx`, `stdin`, and

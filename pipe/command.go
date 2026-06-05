@@ -78,9 +78,12 @@ func (s *commandStage) Requirements() StageRequirements {
 
 func (s *commandStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, stdinCloser io.Closer,
-	stdout io.Writer, stdoutCloser io.Closer,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
+	stdinCloser := ownedCloser(stdin, closeStdin)
+	stdoutCloser := ownedCloser(stdout, closeStdout)
+
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = opts.Dir
 	}

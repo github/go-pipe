@@ -31,9 +31,9 @@ func (w *writeCloseSpy) Close() error {
 	return nil
 }
 
-// TestGoStageHonorsNilClosers verifies that a Function stage closes
-// stdin/stdout iff the corresponding closer is non-nil.
-func TestGoStageHonorsNilClosers(t *testing.T) {
+// TestGoStageHonorsCloseFlags verifies that a Function stage closes
+// stdin/stdout iff the corresponding close flag is true.
+func TestGoStageHonorsCloseFlags(t *testing.T) {
 	cases := []struct {
 		name              string
 		leaveIn, leaveOut bool
@@ -47,14 +47,6 @@ func TestGoStageHonorsNilClosers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := &readCloseSpy{Reader: strings.NewReader("hi")}
 			out := &writeCloseSpy{Writer: io.Discard}
-			var stdinCloser io.Closer = in
-			if tc.leaveIn {
-				stdinCloser = nil
-			}
-			var stdoutCloser io.Closer = out
-			if tc.leaveOut {
-				stdoutCloser = nil
-			}
 
 			s := Function("f", func(_ context.Context, _ Env, stdin io.Reader, stdout io.Writer) error {
 				_, err := io.Copy(stdout, stdin)
@@ -63,8 +55,8 @@ func TestGoStageHonorsNilClosers(t *testing.T) {
 
 			if err := s.Start(
 				context.Background(), StageOptions{},
-				in, stdinCloser,
-				out, stdoutCloser,
+				in, !tc.leaveIn,
+				out, !tc.leaveOut,
 			); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -73,19 +65,41 @@ func TestGoStageHonorsNilClosers(t *testing.T) {
 			}
 
 			if got, want := in.closed.Load(), !tc.leaveIn; got != want {
-				t.Errorf("stdin closed = %v, want %v (stdinCloser nil=%v)", got, want, tc.leaveIn)
+				t.Errorf("stdin closed = %v, want %v (closeStdin=%v)", got, want, !tc.leaveIn)
 			}
 			if got, want := out.closed.Load(), !tc.leaveOut; got != want {
-				t.Errorf("stdout closed = %v, want %v (stdoutCloser nil=%v)", got, want, tc.leaveOut)
+				t.Errorf("stdout closed = %v, want %v (closeStdout=%v)", got, want, !tc.leaveOut)
 			}
 		})
 	}
 }
 
-// TestCommandStageHonorsNilStdinCloser verifies that a command stage closes a
-// non-file stdin (a "late" closer) iff the closer is non-nil. An empty
+func TestStagePanicsWhenOwnedStreamIsNotCloseable(t *testing.T) {
+	s := Function("f", func(_ context.Context, _ Env, _ io.Reader, _ io.Writer) error {
+		return nil
+	})
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected Start to panic")
+		}
+		if !strings.Contains(r.(string), "does not implement io.Closer") {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+
+	_ = s.Start(
+		context.Background(), StageOptions{},
+		strings.NewReader("not closeable"), true,
+		nil, false,
+	)
+}
+
+// TestCommandStageHonorsCloseStdin verifies that a command stage closes a
+// non-file stdin (a "late" closer) iff closeStdin is true. An empty
 // reader is used so exec.Cmd's input-copy goroutine sees EOF promptly.
-func TestCommandStageHonorsNilStdinCloser(t *testing.T) {
+func TestCommandStageHonorsCloseStdin(t *testing.T) {
 	for _, leave := range []bool{false, true} {
 		name := "owns stdin"
 		if leave {
@@ -93,18 +107,14 @@ func TestCommandStageHonorsNilStdinCloser(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			in := &readCloseSpy{Reader: strings.NewReader("")}
-			var stdinCloser io.Closer = in
-			if leave {
-				stdinCloser = nil
-			}
 
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
 			if err := s.Start(
 				context.Background(), StageOptions{},
-				in, stdinCloser,
-				nil, nil,
+				in, !leave,
+				nil, false,
 			); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -113,16 +123,16 @@ func TestCommandStageHonorsNilStdinCloser(t *testing.T) {
 			}
 
 			if got, want := in.closed.Load(), !leave; got != want {
-				t.Errorf("stdin closed = %v, want %v (stdinCloser nil=%v)", got, want, leave)
+				t.Errorf("stdin closed = %v, want %v (closeStdin=%v)", got, want, !leave)
 			}
 		})
 	}
 }
 
-// TestCommandStageHonorsNilStdoutCloser verifies the stdout counterpart: a
+// TestCommandStageHonorsCloseStdout verifies the stdout counterpart: a
 // non-file stdout (routed through the pooled-copy path) is closed iff
-// the closer is non-nil.
-func TestCommandStageHonorsNilStdoutCloser(t *testing.T) {
+// closeStdout is true.
+func TestCommandStageHonorsCloseStdout(t *testing.T) {
 	for _, leave := range []bool{false, true} {
 		name := "owns stdout"
 		if leave {
@@ -130,18 +140,14 @@ func TestCommandStageHonorsNilStdoutCloser(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			out := &writeCloseSpy{Writer: io.Discard}
-			var stdoutCloser io.Closer = out
-			if leave {
-				stdoutCloser = nil
-			}
 
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
 			if err := s.Start(
 				context.Background(), StageOptions{},
-				nil, nil,
-				out, stdoutCloser,
+				nil, false,
+				out, !leave,
 			); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -150,7 +156,7 @@ func TestCommandStageHonorsNilStdoutCloser(t *testing.T) {
 			}
 
 			if got, want := out.closed.Load(), !leave; got != want {
-				t.Errorf("stdout closed = %v, want %v (stdoutCloser nil=%v)", got, want, leave)
+				t.Errorf("stdout closed = %v, want %v (closeStdout=%v)", got, want, !leave)
 			}
 		})
 	}

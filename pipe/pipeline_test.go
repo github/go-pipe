@@ -600,14 +600,14 @@ func (s ErrorStartingStage) Requirements() pipe.StageRequirements {
 
 func (s ErrorStartingStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	_ io.Reader, stdinCloser io.Closer,
-	_ io.Writer, stdoutCloser io.Closer,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
-	if stdinCloser != nil {
-		_ = stdinCloser.Close()
+	if closeStdin {
+		_ = stdin.(io.Closer).Close()
 	}
-	if stdoutCloser != nil {
-		_ = stdoutCloser.Close()
+	if closeStdout {
+		_ = stdout.(io.Closer).Close()
 	}
 	return s.err
 }
@@ -632,17 +632,17 @@ func (s requirementStage) Requirements() pipe.StageRequirements {
 
 func (s requirementStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	_ io.Reader, stdinCloser io.Closer,
-	_ io.Writer, stdoutCloser io.Closer,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
 	if s.started != nil {
 		*s.started = true
 	}
-	if stdinCloser != nil {
-		_ = stdinCloser.Close()
+	if closeStdin {
+		_ = stdin.(io.Closer).Close()
 	}
-	if stdoutCloser != nil {
-		_ = stdoutCloser.Close()
+	if closeStdout {
+		_ = stdout.(io.Closer).Close()
 	}
 	return nil
 }
