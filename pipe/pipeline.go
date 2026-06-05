@@ -221,6 +221,17 @@ type stageStarter struct {
 	stdoutCloser io.Closer
 }
 
+func checkStreamRequirements(s Stage, stdinConnected, stdoutConnected bool) error {
+	requirements := s.Requirements()
+	if requirements.Stdin == StreamForbidden && stdinConnected {
+		return fmt.Errorf("stage %q forbids stdin, but stdin is connected", s.Name())
+	}
+	if requirements.Stdout == StreamForbidden && stdoutConnected {
+		return fmt.Errorf("stage %q forbids stdout, but stdout is connected", s.Name())
+	}
+	return nil
+}
+
 func (p *Pipeline) stageOptions() StageOptions {
 	return StageOptions{Env: p.env, PanicHandler: p.panicHandler}
 }
@@ -317,6 +328,10 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		ss := &stageStarters[i]
 		nextSS := &stageStarters[i+1]
 
+		if err := checkStreamRequirements(s, ss.stdin != nil, true); err != nil {
+			return abort(i, err)
+		}
+
 		// We need to generate a pipe pair for this stage to use
 		// to communicate with its successor:
 		if ss.requirements.StdoutNeedsFile || nextSS.requirements.StdinNeedsFile {
@@ -354,6 +369,10 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		i := len(p.stages) - 1
 		s := p.stages[i]
 		ss := &stageStarters[i]
+
+		if err := checkStreamRequirements(s, ss.stdin != nil, ss.stdout != nil); err != nil {
+			return abort(i, err)
+		}
 
 		if err := s.Start(
 			ctx, p.stageOptions(),

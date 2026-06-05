@@ -616,6 +616,37 @@ func (s ErrorStartingStage) Wait() error {
 	return nil
 }
 
+type requirementStage struct {
+	name        string
+	requirement pipe.StageRequirements
+}
+
+func (s requirementStage) Name() string {
+	return s.name
+}
+
+func (s requirementStage) Requirements() pipe.StageRequirements {
+	return s.requirement
+}
+
+func (s requirementStage) Start(
+	_ context.Context, _ pipe.StageOptions,
+	_ io.Reader, stdinCloser io.Closer,
+	_ io.Writer, stdoutCloser io.Closer,
+) error {
+	if stdinCloser != nil {
+		_ = stdinCloser.Close()
+	}
+	if stdoutCloser != nil {
+		_ = stdoutCloser.Close()
+	}
+	return nil
+}
+
+func (s requirementStage) Wait() error {
+	return nil
+}
+
 func seqFunction(n int) pipe.Stage {
 	return pipe.Function(
 		"seq",
@@ -798,6 +829,72 @@ func TestPrintlnNoOutput(t *testing.T) {
 	p := pipe.New()
 	p.Add(pipe.Println("Look Ma, no output!"))
 	assert.NoError(t, p.Run(ctx))
+}
+
+func TestStreamForbiddenStdin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stage := requirementStage{
+		name: "source",
+		requirement: pipe.StageRequirements{
+			Stdin: pipe.StreamForbidden,
+		},
+	}
+
+	t.Run("without stdin", func(t *testing.T) {
+		t.Parallel()
+		p := pipe.New()
+		p.Add(stage)
+		require.NoError(t, p.Run(ctx))
+	})
+
+	t.Run("with stdin", func(t *testing.T) {
+		t.Parallel()
+		p := pipe.New(pipe.WithStdin(strings.NewReader("ignored")))
+		p.Add(stage)
+		require.ErrorContains(t, p.Run(ctx), `stage "source" forbids stdin`)
+	})
+}
+
+func TestStreamForbiddenStdout(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stage := requirementStage{
+		name: "sink",
+		requirement: pipe.StageRequirements{
+			Stdout: pipe.StreamForbidden,
+		},
+	}
+
+	t.Run("without stdout", func(t *testing.T) {
+		t.Parallel()
+		p := pipe.New()
+		p.Add(stage)
+		require.NoError(t, p.Run(ctx))
+	})
+
+	t.Run("with stdout", func(t *testing.T) {
+		t.Parallel()
+		p := pipe.New(pipe.WithStdout(io.Discard))
+		p.Add(stage)
+		require.ErrorContains(t, p.Run(ctx), `stage "sink" forbids stdout`)
+	})
+}
+
+func TestStreamForbiddenMiddleStage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := pipe.New()
+	p.Add(
+		seqFunction(1),
+		requirementStage{
+			name: "middle-source",
+			requirement: pipe.StageRequirements{
+				Stdin: pipe.StreamForbidden,
+			},
+		},
+	)
+	require.ErrorContains(t, p.Run(ctx), `stage "middle-source" forbids stdin`)
 }
 
 func TestFunctionNoInput(t *testing.T) {
