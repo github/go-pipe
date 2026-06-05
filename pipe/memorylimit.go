@@ -116,9 +116,11 @@ func (m *memoryWatchStage) Preferences() StagePreferences {
 }
 
 func (m *memoryWatchStage) Start(
-	ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
+	ctx context.Context, opts StageOptions,
+	stdin io.Reader, stdinCloser io.Closer,
+	stdout io.Writer, stdoutCloser io.Closer,
 ) error {
-	if err := m.stage.Start(ctx, opts, stdin, stdout); err != nil {
+	if err := m.stage.Start(ctx, opts, stdin, stdinCloser, stdout, stdoutCloser); err != nil {
 		return err
 	}
 

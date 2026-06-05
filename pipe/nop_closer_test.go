@@ -7,46 +7,11 @@ import (
 	"testing"
 )
 
-func TestUnwrapReader(t *testing.T) {
-	src := bytes.NewReader([]byte("payload"))
-
-	if got := UnwrapReader(newReaderNopCloser(src)); got != io.Reader(src) {
-		t.Errorf("UnwrapReader(wrapped) = %T %p, want %p", got, got, src)
-	}
-
-	// A non-wrapped reader passes through unchanged.
-	if got := UnwrapReader(src); got != io.Reader(src) {
-		t.Errorf("UnwrapReader(plain) = %T %p, want %p", got, got, src)
-	}
-
-	if got := UnwrapReader(nil); got != nil {
-		t.Errorf("UnwrapReader(nil) = %v, want nil", got)
-	}
-}
-
-func TestUnwrapWriter(t *testing.T) {
-	dst := &bytes.Buffer{}
-
-	if got := UnwrapWriter(writerNopCloser{dst}); got != io.Writer(dst) {
-		t.Errorf("UnwrapWriter(wrapped) = %T %p, want %p", got, got, dst)
-	}
-
-	// A non-wrapped writer passes through unchanged.
-	if got := UnwrapWriter(dst); got != io.Writer(dst) {
-		t.Errorf("UnwrapWriter(plain) = %T %p, want %p", got, got, dst)
-	}
-
-	if got := UnwrapWriter(nil); got != nil {
-		t.Errorf("UnwrapWriter(nil) = %v, want nil", got)
-	}
-}
-
-// TestGoStageUnwrapsWriterToStdin verifies that a Function stage
-// receives its stdin already unwrapped to the caller's concrete type,
+// TestGoStageReceivesConcreteWriterToStdin verifies that a Function stage
+// receives its stdin as the caller's concrete type,
 // so fast-path interfaces such as io.WriterTo survive. This guards
-// against the regression where goStage only unwrapped one of the
-// internal nop-closer wrapper types.
-func TestGoStageUnwrapsWriterToStdin(t *testing.T) {
+// against regressions where the concrete type is hidden behind a wrapper.
+func TestGoStageReceivesConcreteWriterToStdin(t *testing.T) {
 	src := bytes.NewReader([]byte("hello"))
 
 	var got io.Reader
@@ -62,9 +27,9 @@ func TestGoStageUnwrapsWriterToStdin(t *testing.T) {
 	}
 
 	if got != io.Reader(src) {
-		t.Fatalf("StageFunc stdin = %T %p, want unwrapped *bytes.Reader %p", got, got, src)
+		t.Fatalf("StageFunc stdin = %T %p, want *bytes.Reader %p", got, got, src)
 	}
 	if _, ok := got.(io.WriterTo); !ok {
-		t.Fatalf("unwrapped stdin %T does not expose io.WriterTo fast path", got)
+		t.Fatalf("stdin %T does not expose io.WriterTo fast path", got)
 	}
 }

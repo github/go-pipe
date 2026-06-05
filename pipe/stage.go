@@ -10,13 +10,13 @@ import (
 //
 // Who closes stdin and stdout?
 //
-// A `Stage` as a whole is responsible for closing its end of
-// stdin and stdout (assuming that `Start()` returns successfully).
-// Its doing so tells the previous/next stage that it is done
-// reading/writing data, which can affect their behavior. Therefore,
-// it should close each one as soon as it is done with it. If the
-// caller wants to suppress the closing of stdin/stdout, it can always
-// indicate otherwise via `StageOptions`.
+// A `Stage` as a whole is responsible for closing its end of stdin
+// and stdout (assuming that `Start()` returns successfully) if the
+// corresponding closer passed to `Start()` is non-nil. Its doing so
+// tells the previous/next stage that it is done reading/writing data,
+// which can affect their behavior. Therefore, it should close each
+// one as soon as it is done with it. If the caller wants to suppress
+// the closing of stdin/stdout, it passes a nil closer.
 //
 // How this should be done depends on whether stdin/stdout are of type
 // `*os.File`.
@@ -65,15 +65,9 @@ import (
 // From the point of view of the pipeline as a whole, if stdin is
 // provided by the user (`WithStdin()`), then we don't want the first
 // stage to close it at all, whether it's an `*os.File` or not. The
-// pipeline communicates this by setting `StageOptions.LeaveStdinOpen`
-// when it starts that stage. stdin is still wrapped in a
-// `readerNopCloser` before being passed in, but only so that a bare
-// `io.Reader` satisfies `io.ReadCloser`, and so that a command stage
-// can recover the underlying object via [UnwrapReader].
-//
-// For stdout, it depends on whether the user supplied it using
-// `WithStdout()` or `WithStdoutCloser()`. [UnwrapWriter] plays the same
-// role for stdout that [UnwrapReader] plays for stdin.
+// pipeline communicates this by passing a nil stdin closer when it
+// starts that stage. For stdout, it depends on whether the user
+// supplied it using `WithStdout()` or `WithStdoutCloser()`.
 //
 // [1] It's theoretically possible for a command to pass the open file
 //     descriptor to another, longer-lived process, in which case the
@@ -92,14 +86,19 @@ type Stage interface {
 	// Start starts the stage in the background, in the environment
 	// described by `opts.Env`, using `stdin` to provide its input and
 	// `stdout` to collect its output. (`stdin`/`stdout` might be set
-	// to `nil` if the stage is to receive no input, which might be
-	// the case for the first/last stage in a pipeline.) See the
-	// `Stage` type comment for more information about responsibility
-	// for closing stdin and stdout.
+	// to `nil` if the stage is to receive no input, which might be the
+	// case for the first/last stage in a pipeline.) If `stdinCloser` or
+	// `stdoutCloser` is non-nil, the stage is responsible for closing
+	// it. See the `Stage` type comment for more information about
+	// responsibility for closing stdin and stdout.
 	//
 	// If `Start()` returns without an error, `Wait()` must also be
 	// called, to allow all resources to be freed.
-	Start(ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser) error
+	Start(
+		ctx context.Context, opts StageOptions,
+		stdin io.Reader, stdinCloser io.Closer,
+		stdout io.Writer, stdoutCloser io.Closer,
+	) error
 
 	// Wait waits for the stage to be done, either because it has
 	// finished or because it has been killed due to the expiration of
@@ -120,10 +119,6 @@ type StageOptions struct {
 	// handler), converting it into an error. Stage types that don't run
 	// user code in a library-spawned goroutine ignore it.
 	PanicHandler StagePanicHandler
-
-	// LeaveStd{in,out}Open tell the stage that it must NOT close stdin/stdout
-	LeaveStdinOpen  bool
-	LeaveStdoutOpen bool
 }
 
 // StagePanicHandler is a function that handles panics in a pipeline's stages.
@@ -145,15 +140,15 @@ type StagePreferences struct {
 // `os.Pipe()`) as their stdin and stdout, because those can be passed
 // directly by the external process without any extra copying and also
 // simplify the semantics around process termination. Go function
-// stages are typically happy with any `io.ReadCloser` (such as one
-// produced by `io.Pipe()`), which can be more efficient because
+// stages are typically happy with any `io.Reader` (such as the read
+// end produced by `io.Pipe()`), which can be more efficient because
 // traffic through an `io.Pipe()` happens entirely in userspace.
 type IOPreference int
 
 const (
 	// IOPreferenceUndefined indicates that the stage doesn't care
 	// what form the specified stdin / stdout takes (i.e., any old
-	// `io.ReadCloser` / `io.WriteCloser` is just fine).
+	// `io.Reader` / `io.Writer` is just fine).
 	IOPreferenceUndefined IOPreference = iota
 
 	// IOPreferenceFile indicates that the stage would prefer for the

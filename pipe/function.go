@@ -53,15 +53,17 @@ func (s *goStage) Preferences() StagePreferences {
 }
 
 func (s *goStage) Start(
-	ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
+	ctx context.Context, opts StageOptions,
+	stdin io.Reader, stdinCloser io.Closer,
+	stdout io.Writer, stdoutCloser io.Closer,
 ) error {
-	r := UnwrapReader(stdin)
+	r := stdin
 	if r == nil {
 		// treat nil as empty input.
 		r = strings.NewReader("")
 	}
 
-	w := UnwrapWriter(stdout)
+	w := stdout
 	if w == nil {
 		// treat nil output as /dev/null
 		w = io.Discard
@@ -74,13 +76,13 @@ func (s *goStage) Start(
 					s.err = opts.PanicHandler(p)
 				}
 			}
-			if stdout != nil && !opts.LeaveStdoutOpen {
-				if err := stdout.Close(); err != nil && s.err == nil {
+			if stdoutCloser != nil {
+				if err := stdoutCloser.Close(); err != nil && s.err == nil {
 					s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
 				}
 			}
-			if stdin != nil && !opts.LeaveStdinOpen {
-				if err := stdin.Close(); err != nil && s.err == nil {
+			if stdinCloser != nil {
+				if err := stdinCloser.Close(); err != nil && s.err == nil {
 					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
 				}
 			}

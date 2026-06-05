@@ -602,13 +602,15 @@ func (s ErrorStartingStage) Preferences() pipe.StagePreferences {
 }
 
 func (s ErrorStartingStage) Start(
-	_ context.Context, _ pipe.StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
+	_ context.Context, _ pipe.StageOptions,
+	_ io.Reader, stdinCloser io.Closer,
+	_ io.Writer, stdoutCloser io.Closer,
 ) error {
-	if stdin != nil {
-		_ = stdin.Close()
+	if stdinCloser != nil {
+		_ = stdinCloser.Close()
 	}
-	if stdout != nil {
-		_ = stdout.Close()
+	if stdoutCloser != nil {
+		_ = stdoutCloser.Close()
 	}
 	return s.err
 }

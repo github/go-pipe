@@ -16,16 +16,14 @@ import (
 // subprocess can detect when that fd is closed.
 func TestCommandStageStdoutFastPath(t *testing.T) {
 	cases := []struct {
-		name string
-		wrap func(*os.File) io.WriteCloser
+		name   string
+		closer io.Closer
 	}{
 		{
-			name: "raw *os.File via WithStdoutCloser",
-			wrap: func(f *os.File) io.WriteCloser { return f },
+			name: "raw *os.File with closer",
 		},
 		{
-			name: "writerNopCloser{*os.File} via WithStdout",
-			wrap: func(f *os.File) io.WriteCloser { return writerNopCloser{f} },
+			name: "raw *os.File without closer",
 		},
 	}
 	for _, tc := range cases {
@@ -43,7 +41,11 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(ctx, StageOptions{}, nil, tc.wrap(f)); err != nil {
+			stdoutCloser := tc.closer
+			if tc.name == "raw *os.File with closer" {
+				stdoutCloser = f
+			}
+			if err := s.Start(ctx, StageOptions{}, nil, nil, f, stdoutCloser); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			t.Cleanup(func() { _ = s.Wait() })

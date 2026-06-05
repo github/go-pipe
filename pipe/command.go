@@ -77,7 +77,9 @@ func (s *commandStage) Preferences() StagePreferences {
 }
 
 func (s *commandStage) Start(
-	ctx context.Context, opts StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
+	ctx context.Context, opts StageOptions,
+	stdin io.Reader, stdinCloser io.Closer,
+	stdout io.Writer, stdoutCloser io.Closer,
 ) error {
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = opts.Dir
@@ -85,52 +87,45 @@ func (s *commandStage) Start(
 
 	s.setupEnv(ctx, opts.Env)
 
-	// Things that have to be closed as soon as the command has
-	// started:
+	// Things that have to be closed as soon as the command has started:
 	var earlyClosers []io.Closer
 
-	// See the type comment for `Stage` and the long comment in
-	// `Pipeline.WithStdin()` for the explanation of this unwrapping
-	// and closing behavior.
+	// See the type comment for `Stage` for the explanation of this closing behavior.
 	if stdin != nil {
-		// For a non-wrapped value this is a no-op.
-		reader := UnwrapReader(stdin)
-		s.cmd.Stdin = reader
+		s.cmd.Stdin = stdin
+	}
 
-		switch {
-		case opts.LeaveStdinOpen:
-			// leave it open.
-		default:
-			if _, ok := reader.(*os.File); ok {
-				// We can close our copy as soon as the command has started
-				earlyClosers = append(earlyClosers, stdin)
-			} else {
-				// We need to close `stdin`, but only after the command has finished
-				s.lateClosers = append(s.lateClosers, stdin)
-			}
+	if stdinCloser != nil {
+		if _, ok := stdin.(*os.File); ok {
+			// We can close our copy as soon as the command has started
+			earlyClosers = append(earlyClosers, stdinCloser)
+		} else {
+			// We need to close `stdin`, but only after the command has finished
+			s.lateClosers = append(s.lateClosers, stdinCloser)
 		}
 	}
 
 	if stdout != nil {
-		writer := UnwrapWriter(stdout)
-		if f, ok := writer.(*os.File); ok {
+		if f, ok := stdout.(*os.File); ok {
 			s.cmd.Stdout = f
-			if !opts.LeaveStdoutOpen {
-				earlyClosers = append(earlyClosers, stdout)
+			if stdoutCloser != nil {
+				earlyClosers = append(earlyClosers, stdoutCloser)
 			}
 		} else {
 			// Route the copy through our own pipe so we can use a
 			// pooled buffer rather than letting exec.Cmd allocate a
 			// fresh 32KB buffer for its internal io.Copy.
-			ec, err := s.setupPooledStdout(writer)
+			ec, err := s.setupPooledStdout(stdout)
 			if err != nil {
 				return err
 			}
 			earlyClosers = append(earlyClosers, ec)
-			if !opts.LeaveStdoutOpen {
-				s.lateClosers = append(s.lateClosers, stdout)
+			if stdoutCloser != nil {
+				s.lateClosers = append(s.lateClosers, stdoutCloser)
 			}
 		}
+	} else if stdoutCloser != nil {
+		s.lateClosers = append(s.lateClosers, stdoutCloser)
 	}
 
 	closeEarlyClosers := func() {

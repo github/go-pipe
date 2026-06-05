@@ -20,14 +20,11 @@ import (
 
 // Additional values used for the expected types of stdin/stdout:
 const (
-	IOPreferenceUndefinedNopCloser pipe.IOPreference = iota + 100
-	IOPreferenceFileNopCloser
-
 	// expectNil is a test-only expectation token meaning that the
 	// stage should be passed a `nil` stdin / stdout (which happens at
 	// the beginning / end of a pipeline when no overall stdin / stdout
 	// is configured). It is not a real `IOPreference`.
-	expectNil
+	expectNil pipe.IOPreference = iota + 100
 )
 
 func file(t *testing.T) *os.File {
@@ -85,8 +82,8 @@ func newPipeSniffingCmd(
 type pipeSniffingStage struct {
 	prefs  pipe.StagePreferences
 	expect pipe.StagePreferences
-	stdin  io.ReadCloser
-	stdout io.WriteCloser
+	stdin  io.Reader
+	stdout io.Writer
 }
 
 func (*pipeSniffingStage) Name() string {
@@ -98,15 +95,17 @@ func (s *pipeSniffingStage) Preferences() pipe.StagePreferences {
 }
 
 func (s *pipeSniffingStage) Start(
-	_ context.Context, _ pipe.StageOptions, stdin io.ReadCloser, stdout io.WriteCloser,
+	_ context.Context, _ pipe.StageOptions,
+	stdin io.Reader, stdinCloser io.Closer,
+	stdout io.Writer, stdoutCloser io.Closer,
 ) error {
 	s.stdin = stdin
-	if stdin != nil {
-		_ = stdin.Close()
+	if stdinCloser != nil {
+		_ = stdinCloser.Close()
 	}
 	s.stdout = stdout
-	if stdout != nil {
-		_ = stdout.Close()
+	if stdoutCloser != nil {
+		_ = stdoutCloser.Close()
 	}
 	return nil
 }
@@ -128,9 +127,6 @@ func ioTypeString(f any) string {
 	if f == nil {
 		return "nil"
 	}
-	if f, ok := pipe.UnwrapNopCloser(f); ok {
-		return fmt.Sprintf("nopCloser(%s)", ioTypeString(f))
-	}
 	switch f := f.(type) {
 	case *os.File:
 		return "*os.File"
@@ -151,16 +147,12 @@ func prefString(pref pipe.IOPreference) string {
 		return "*os.File"
 	case expectNil:
 		return "nil"
-	case IOPreferenceUndefinedNopCloser:
-		return "nopCloser(other)"
-	case IOPreferenceFileNopCloser:
-		return "nopCloser(*os.File)"
 	default:
 		panic(fmt.Sprintf("invalid IOPreference: %d", pref))
 	}
 }
 
-func checkStdinExpectation(t *testing.T, i int, pref pipe.IOPreference, stdin io.ReadCloser) {
+func checkStdinExpectation(t *testing.T, i int, pref pipe.IOPreference, stdin io.Reader) {
 	t.Helper()
 
 	ioType := ioTypeString(stdin)
@@ -171,11 +163,7 @@ func checkStdinExpectation(t *testing.T, i int, pref pipe.IOPreference, stdin io
 	)
 }
 
-type WriterNopCloser interface {
-	NopCloserWriter() io.Writer
-}
-
-func checkStdoutExpectation(t *testing.T, i int, pref pipe.IOPreference, stdout io.WriteCloser) {
+func checkStdoutExpectation(t *testing.T, i int, pref pipe.IOPreference, stdout io.Writer) {
 	t.Helper()
 
 	ioType := ioTypeString(stdout)
@@ -215,7 +203,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdin(file(t)),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingFunc(IOPreferenceFileNopCloser, expectNil),
+				newPipeSniffingFunc(pipe.IOPreferenceFile, expectNil),
 			},
 		},
 		{
@@ -224,7 +212,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdout(file(t)),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingFunc(expectNil, IOPreferenceFileNopCloser),
+				newPipeSniffingFunc(expectNil, pipe.IOPreferenceFile),
 			},
 		},
 		{
@@ -243,7 +231,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdoutCloser(writeCloser()),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingFunc(IOPreferenceUndefinedNopCloser, pipe.IOPreferenceUndefined),
+				newPipeSniffingFunc(pipe.IOPreferenceUndefined, pipe.IOPreferenceUndefined),
 			},
 		},
 		{
@@ -259,7 +247,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdin(file(t)),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingCmd(IOPreferenceFileNopCloser, expectNil),
+				newPipeSniffingCmd(pipe.IOPreferenceFile, expectNil),
 			},
 		},
 		{
@@ -268,7 +256,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdout(file(t)),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingCmd(expectNil, IOPreferenceFileNopCloser),
+				newPipeSniffingCmd(expectNil, pipe.IOPreferenceFile),
 			},
 		},
 		{
@@ -287,7 +275,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdoutCloser(writeCloser()),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingCmd(IOPreferenceUndefinedNopCloser, pipe.IOPreferenceUndefined),
+				newPipeSniffingCmd(pipe.IOPreferenceUndefined, pipe.IOPreferenceUndefined),
 			},
 		},
 		{
@@ -297,7 +285,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdoutCloser(writeCloser()),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingFunc(IOPreferenceFileNopCloser, pipe.IOPreferenceUndefined),
+				newPipeSniffingFunc(pipe.IOPreferenceFile, pipe.IOPreferenceUndefined),
 				newPipeSniffingFunc(pipe.IOPreferenceUndefined, pipe.IOPreferenceUndefined),
 			},
 		},
@@ -308,7 +296,7 @@ func TestPipeTypes(t *testing.T) {
 			},
 			stages: []pipe.Stage{
 				newPipeSniffingFunc(expectNil, pipe.IOPreferenceFile),
-				newPipeSniffingCmd(pipe.IOPreferenceFile, IOPreferenceFileNopCloser),
+				newPipeSniffingCmd(pipe.IOPreferenceFile, pipe.IOPreferenceFile),
 			},
 		},
 		{
@@ -317,7 +305,7 @@ func TestPipeTypes(t *testing.T) {
 				pipe.WithStdin(readCloser()),
 			},
 			stages: []pipe.Stage{
-				newPipeSniffingCmd(IOPreferenceUndefinedNopCloser, pipe.IOPreferenceFile),
+				newPipeSniffingCmd(pipe.IOPreferenceUndefined, pipe.IOPreferenceFile),
 				newPipeSniffingFunc(pipe.IOPreferenceFile, expectNil),
 			},
 		},
