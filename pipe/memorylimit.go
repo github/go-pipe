@@ -52,8 +52,8 @@ func WithPeakUsageLogging() MemoryWatchOption {
 // If the event handler panics while reporting the over-limit event, the
 // stage is still killed. A panic in any other event-handler call (an
 // RSS-read error, or the peak-usage report) is recovered via
-// StartOptions.PanicHandler and the stage keeps running unmonitored; see
-// StartOptions.PanicHandler.
+// StageOptions.PanicHandler and the stage keeps running unmonitored; see
+// StageOptions.PanicHandler.
 func MemoryWatch(stage Stage, eventHandler func(e *Event), opts ...MemoryWatchOption) Stage {
 	limitableStage, ok := stage.(LimitableStage)
 	if !ok {
@@ -111,14 +111,16 @@ func (m *memoryWatchStage) Name() string {
 	return m.stage.Name() + m.nameSuffix
 }
 
-func (m *memoryWatchStage) Preferences() StagePreferences {
-	return m.stage.Preferences()
+func (m *memoryWatchStage) Requirements() StageRequirements {
+	return m.stage.Requirements()
 }
 
 func (m *memoryWatchStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, opts StartOptions,
+	ctx context.Context, opts StageOptions,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
-	if err := m.stage.Start(ctx, env, stdin, stdout, opts); err != nil {
+	if err := m.stage.Start(ctx, opts, stdin, closeStdin, stdout, closeStdout); err != nil {
 		return err
 	}
 

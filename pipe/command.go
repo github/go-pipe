@@ -69,77 +69,53 @@ func (s *commandStage) Name() string {
 	return s.name
 }
 
-func (s *commandStage) Preferences() StagePreferences {
-	return StagePreferences{
-		StdinPreference:  IOPreferenceFile,
-		StdoutPreference: IOPreferenceFile,
+func (s *commandStage) Requirements() StageRequirements {
+	return StageRequirements{
+		StdinNeedsFile:  true,
+		StdoutNeedsFile: true,
 	}
 }
 
 func (s *commandStage) Start(
-	ctx context.Context, env Env, stdin io.ReadCloser, stdout io.WriteCloser, _ StartOptions,
+	ctx context.Context, opts StageOptions,
+	stdin io.Reader, closeStdin bool,
+	stdout io.Writer, closeStdout bool,
 ) error {
+	stdinCloser := ownedCloser(stdin, closeStdin)
+	stdoutCloser := ownedCloser(stdout, closeStdout)
+
 	if s.cmd.Dir == "" {
-		s.cmd.Dir = env.Dir
+		s.cmd.Dir = opts.Dir
 	}
 
-	s.setupEnv(ctx, env)
+	s.setupEnv(ctx, opts.Env)
 
-	// Things that have to be closed as soon as the command has
-	// started:
+	// Things that have to be closed as soon as the command has started:
 	var earlyClosers []io.Closer
 
-	// See the type comment for `Stage` and the long comment in
-	// `Pipeline.WithStdin()` for the explanation of this unwrapping
-	// and closing behavior.
-
+	// See the type comment for `Stage` for the explanation of this closing behavior.
 	if stdin != nil {
-		switch stdin := stdin.(type) {
-		case readerNopCloser:
-			// In this case, we shouldn't close it. But unwrap it for
-			// efficiency's sake:
-			s.cmd.Stdin = UnwrapReader(stdin)
-		case *os.File:
-			// In this case, we can close stdin as soon as the command
-			// has started:
-			s.cmd.Stdin = stdin
-			earlyClosers = append(earlyClosers, stdin)
-		default:
-			// In this case, we need to close `stdin`, but we should
-			// only do so after the command has finished:
-			s.cmd.Stdin = stdin
-			s.lateClosers = append(s.lateClosers, stdin)
+		s.cmd.Stdin = stdin
+	}
+
+	if stdinCloser != nil {
+		if _, ok := stdin.(*os.File); ok {
+			// We can close our copy as soon as the command has started
+			earlyClosers = append(earlyClosers, stdinCloser)
+		} else {
+			// We need to close `stdin`, but only after the command has finished
+			s.lateClosers = append(s.lateClosers, stdinCloser)
 		}
 	}
 
 	if stdout != nil {
-		// See the long comment in `Pipeline.Start()` for the
-		// explanation of this special case.
-		switch stdout := stdout.(type) {
-		case writerNopCloser:
-			// We shouldn't close the wrapped writer. Unwrap it; if
-			// it's an `*os.File`, exec.Cmd can pass the fd directly
-			// to the child. Otherwise route the copy through our own
-			// pipe so we can use a pooled buffer.
-			writer := UnwrapWriter(stdout)
-			if f, ok := writer.(*os.File); ok {
-				s.cmd.Stdout = f
-			} else {
-				ec, err := s.setupPooledStdout(writer)
-				if err != nil {
-					return err
-				}
-				earlyClosers = append(earlyClosers, ec)
+		if f, ok := stdout.(*os.File); ok {
+			s.cmd.Stdout = f
+			if stdoutCloser != nil {
+				earlyClosers = append(earlyClosers, stdoutCloser)
 			}
-		case *os.File:
-			// In this case, we can close stdout as soon as the command
-			// has started:
-			s.cmd.Stdout = stdout
-			earlyClosers = append(earlyClosers, stdout)
-		default:
-			// In this case, we need to close `stdout`, but we should
-			// only do so after the command has finished. We also
-			// route the copy through our own pipe so we can use a
+		} else {
+			// Route the copy through our own pipe so we can use a
 			// pooled buffer rather than letting exec.Cmd allocate a
 			// fresh 32KB buffer for its internal io.Copy.
 			ec, err := s.setupPooledStdout(stdout)
@@ -147,8 +123,12 @@ func (s *commandStage) Start(
 				return err
 			}
 			earlyClosers = append(earlyClosers, ec)
-			s.lateClosers = append(s.lateClosers, stdout)
+			if stdoutCloser != nil {
+				s.lateClosers = append(s.lateClosers, stdoutCloser)
+			}
 		}
+	} else if stdoutCloser != nil {
+		s.lateClosers = append(s.lateClosers, stdoutCloser)
 	}
 
 	closeEarlyClosers := func() {

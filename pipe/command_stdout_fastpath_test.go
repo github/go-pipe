@@ -2,7 +2,6 @@ package pipe
 
 import (
 	"context"
-	"io"
 	"os"
 	"os/exec"
 	"testing"
@@ -16,16 +15,15 @@ import (
 // subprocess can detect when that fd is closed.
 func TestCommandStageStdoutFastPath(t *testing.T) {
 	cases := []struct {
-		name string
-		wrap func(*os.File) io.WriteCloser
+		name        string
+		closeStdout bool
 	}{
 		{
-			name: "raw *os.File via WithStdoutCloser",
-			wrap: func(f *os.File) io.WriteCloser { return f },
+			name:        "raw *os.File with closeStdout",
+			closeStdout: true,
 		},
 		{
-			name: "writerNopCloser{*os.File} via WithStdout",
-			wrap: func(f *os.File) io.WriteCloser { return writerNopCloser{f} },
+			name: "raw *os.File without closeStdout",
 		},
 	}
 	for _, tc := range cases {
@@ -43,7 +41,7 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(ctx, Env{}, nil, tc.wrap(f), StartOptions{}); err != nil {
+			if err := s.Start(ctx, StageOptions{}, nil, false, f, tc.closeStdout); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			t.Cleanup(func() { _ = s.Wait() })

@@ -20,10 +20,10 @@ type fakeLimitableStage struct {
 	done chan struct{}
 }
 
-func (fakeLimitableStage) Name() string                  { return "fake" }
-func (fakeLimitableStage) Preferences() StagePreferences { return StagePreferences{} }
+func (fakeLimitableStage) Name() string                    { return "fake" }
+func (fakeLimitableStage) Requirements() StageRequirements { return StageRequirements{} }
 func (fakeLimitableStage) Start(
-	context.Context, Env, io.ReadCloser, io.WriteCloser, StartOptions,
+	context.Context, StageOptions, io.Reader, bool, io.Writer, bool,
 ) error {
 	return nil
 }
@@ -52,11 +52,11 @@ func panickingWatchStage() Stage {
 // surfaced as the stage's Wait error.
 func TestMemoryWatchStagePanicWithHandlerSurfaced(t *testing.T) {
 	ms := panickingWatchStage()
-	opts := StartOptions{
+	opts := StageOptions{
 		PanicHandler: func(p any) error { return fmt.Errorf("recovered: %v", p) },
 	}
 
-	if err := ms.Start(context.Background(), Env{}, nil, nil, opts); err != nil {
+	if err := ms.Start(context.Background(), opts, nil, false, nil, false); err != nil {
 		t.Fatalf("Start returned unexpected error: %v", err)
 	}
 
@@ -104,10 +104,10 @@ func newKillTrackingStage() *killTrackingStage {
 	}
 }
 
-func (*killTrackingStage) Name() string                  { return "kill-tracking" }
-func (*killTrackingStage) Preferences() StagePreferences { return StagePreferences{} }
+func (*killTrackingStage) Name() string                    { return "kill-tracking" }
+func (*killTrackingStage) Requirements() StageRequirements { return StageRequirements{} }
 func (*killTrackingStage) Start(
-	context.Context, Env, io.ReadCloser, io.WriteCloser, StartOptions,
+	context.Context, StageOptions, io.Reader, bool, io.Writer, bool,
 ) error {
 	return nil
 }
@@ -135,11 +135,11 @@ func TestMemoryLimitKillsEvenIfEventHandlerPanics(t *testing.T) {
 	stage := newKillTrackingStage()
 	eventHandler := func(*Event) { panic(memWatchPanicSentinel) }
 	ms := MemoryWatch(stage, eventHandler, WithMemoryLimit(1))
-	opts := StartOptions{
+	opts := StageOptions{
 		PanicHandler: func(p any) error { return fmt.Errorf("recovered: %v", p) },
 	}
 
-	if err := ms.Start(context.Background(), Env{}, nil, nil, opts); err != nil {
+	if err := ms.Start(context.Background(), opts, nil, false, nil, false); err != nil {
 		t.Fatalf("Start returned unexpected error: %v", err)
 	}
 

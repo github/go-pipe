@@ -57,7 +57,7 @@ func ScannerFunction(
 				}
 			}
 			return scanner.Err()
-			// `p.AddFunction()` arranges for `stdout` to be closed.
+			// The Function stage closes `stdout` if it owns it.
 		},
 	)
 }

@@ -13,6 +13,7 @@ func Print(a ...interface{}) Stage {
 			_, err := fmt.Fprint(stdout, a...)
 			return err
 		},
+		ForbidStdin(),
 	)
 }
 
@@ -23,6 +24,7 @@ func Println(a ...interface{}) Stage {
 			_, err := fmt.Fprintln(stdout, a...)
 			return err
 		},
+		ForbidStdin(),
 	)
 }
 
@@ -33,5 +35,6 @@ func Printf(format string, a ...interface{}) Stage {
 			_, err := fmt.Fprintf(stdout, format, a...)
 			return err
 		},
+		ForbidStdin(),
 	)
 }
