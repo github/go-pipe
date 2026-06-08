@@ -221,7 +221,7 @@ type stageStarter struct {
 	stdoutCloser io.Closer
 }
 
-func checkStreamRequirement(requirement StreamRequirement) error {
+func (requirement StreamRequirement) validate() error {
 	switch requirement {
 	case StreamOptional, StreamForbidden:
 		return nil
@@ -230,13 +230,11 @@ func checkStreamRequirement(requirement StreamRequirement) error {
 	}
 }
 
-func checkStreamRequirements(
-	s Stage, requirements StageRequirements, stdinConnected, stdoutConnected bool,
-) error {
-	if err := checkStreamRequirement(requirements.Stdin); err != nil {
+func (requirements StageRequirements) validate(s Stage, stdinConnected, stdoutConnected bool) error {
+	if err := requirements.Stdin.validate(); err != nil {
 		return fmt.Errorf("stdin: %w", err)
 	}
-	if err := checkStreamRequirement(requirements.Stdout); err != nil {
+	if err := requirements.Stdout.validate(); err != nil {
 		return fmt.Errorf("stdout: %w", err)
 	}
 	if requirements.Stdin == StreamForbidden && stdinConnected {
@@ -311,9 +309,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	}
 
 	for i, s := range p.stages {
-		err := checkStreamRequirements(
+		err := stageStarters[i].requirements.validate(
 			s,
-			stageStarters[i].requirements,
 			i > 0 || p.stdin != nil,
 			i < len(p.stages)-1 || p.stdout != nil,
 		)
