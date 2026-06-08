@@ -133,6 +133,26 @@ func TestWithExtraEnvAddsCommandEnv(t *testing.T) {
 	}
 }
 
+func TestWithExtraEnvPreservesProcessHooks(t *testing.T) {
+	stage := WithExtraEnv(Command("true"), nil)
+
+	if _, ok := stage.(processKiller); !ok {
+		t.Fatal("WithExtraEnv(Command(...)) does not implement processKiller")
+	}
+}
+
+func TestWithExtraEnvDoesNotAddProcessHooks(t *testing.T) {
+	inner := Function("inner", func(context.Context, Env, io.Reader, io.Writer) error {
+		return nil
+	})
+
+	stage := WithExtraEnv(inner, nil)
+
+	if _, ok := stage.(processKiller); ok {
+		t.Fatal("WithExtraEnv(Function(...)) unexpectedly implements processKiller")
+	}
+}
+
 func TestWithExtraEnvPreservesStageMetadata(t *testing.T) {
 	inner := Function("inner", func(context.Context, Env, io.Reader, io.Writer) error {
 		return nil

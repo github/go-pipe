@@ -7,10 +7,27 @@ import (
 
 // WithExtraEnv returns a Stage that adds env to the environment seen by inner.
 func WithExtraEnv(inner Stage, env []EnvVar) Stage {
-	return &stageWithExtraEnv{
+	stage := &stageWithExtraEnv{
 		inner: inner,
 		env:   env,
 	}
+	if processKiller, ok := inner.(processKiller); ok {
+		return &processStageWithExtraEnv{
+			stageWithExtraEnv: stage,
+			processKiller:     processKiller,
+		}
+	}
+	return stage
+}
+
+type processKiller interface {
+	processProvider
+	Kill(error)
+}
+
+type processStageWithExtraEnv struct {
+	*stageWithExtraEnv
+	processKiller
 }
 
 type stageWithExtraEnv struct {
