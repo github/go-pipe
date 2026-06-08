@@ -65,7 +65,6 @@ func TestWithExtraEnvDoesNotShareVarsBackingArray(t *testing.T) {
 		{Key: "PIPELINE2", Value: "present"},
 		{Key: "PIPELINE3", Value: "present"},
 	} {
-		env := env
 		baseVars = append(baseVars, func(_ context.Context, vars []EnvVar) []EnvVar {
 			return append(vars, env)
 		})
