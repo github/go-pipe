@@ -40,9 +40,10 @@ var (
 )
 
 // processProvider is the hook external memory-watchers use to find the running
-// process so they can sample its RSS.
+// process so they can sample its RSS and kill it if necessary.
 type processProvider interface {
 	Process() *os.Process
+	Kill(error)
 }
 
 // Command returns a pipeline `Stage` based on the specified external

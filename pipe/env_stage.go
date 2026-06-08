@@ -11,23 +11,18 @@ func WithExtraEnv(inner Stage, env []EnvVar) Stage {
 		inner: inner,
 		env:   env,
 	}
-	if processKiller, ok := inner.(processKiller); ok {
+	if processProvider, ok := inner.(processProvider); ok {
 		return &processStageWithExtraEnv{
 			stageWithExtraEnv: stage,
-			processKiller:     processKiller,
+			processProvider:   processProvider,
 		}
 	}
 	return stage
 }
 
-type processKiller interface {
-	processProvider
-	Kill(error)
-}
-
 type processStageWithExtraEnv struct {
+	processProvider
 	*stageWithExtraEnv
-	processKiller
 }
 
 type stageWithExtraEnv struct {

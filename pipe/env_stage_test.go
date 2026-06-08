@@ -169,7 +169,7 @@ func TestWithExtraEnvPreservesProcessHooks(t *testing.T) {
 	t.Parallel()
 
 	stage := WithExtraEnv(Command("true"), nil)
-	assert.Implements(t, (*processKiller)(nil), stage)
+	assert.Implements(t, (*processProvider)(nil), stage)
 }
 
 func TestWithExtraEnvDoesNotAddProcessHooks(t *testing.T) {
@@ -180,7 +180,7 @@ func TestWithExtraEnvDoesNotAddProcessHooks(t *testing.T) {
 	})
 
 	stage := WithExtraEnv(inner, nil)
-	assert.NotImplements(t, (*processKiller)(nil), stage)
+	assert.NotImplements(t, (*processProvider)(nil), stage)
 }
 
 func TestWithExtraEnvPreservesStageMetadata(t *testing.T) {
