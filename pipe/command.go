@@ -15,8 +15,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var errProcessInfoMissing = errors.New("cmd.Process is nil")
-
 // commandStage is a pipeline `Stage` based on running an external
 // command and piping the data through its stdin and stdout.
 type commandStage struct {
@@ -37,8 +35,15 @@ type commandStage struct {
 }
 
 var (
-	_ Stage = (*commandStage)(nil)
+	_ Stage           = (*commandStage)(nil)
+	_ processProvider = (*commandStage)(nil)
 )
+
+// processProvider is the hook external memory-watchers use to find the running
+// process so they can sample its RSS.
+type processProvider interface {
+	Process() *os.Process
+}
 
 // Command returns a pipeline `Stage` based on the specified external
 // `command`, run with the given command-line `args`. Its stdin and
@@ -67,6 +72,10 @@ func CommandStage(name string, cmd *exec.Cmd) Stage {
 
 func (s *commandStage) Name() string {
 	return s.name
+}
+
+func (s *commandStage) Process() *os.Process {
+	return s.cmd.Process
 }
 
 func (s *commandStage) Requirements() StageRequirements {
