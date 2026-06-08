@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCommandStageStdoutFastPath asserts that when a commandStage's stdout is
@@ -33,29 +36,24 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			defer cancel()
 
 			f, err := os.CreateTemp(t.TempDir(), "stdout")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			t.Cleanup(func() { _ = f.Close() })
 
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(ctx, StageOptions{}, nil, false, f, tc.closeStdout); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
+			require.NoError(t, s.Start(ctx, StageOptions{}, nil, false, f, tc.closeStdout))
 			t.Cleanup(func() { _ = s.Wait() })
 
 			gotFile, ok := s.cmd.Stdout.(*os.File)
-			if !ok {
-				t.Fatalf("expected cmd.Stdout to be *os.File, got %T", s.cmd.Stdout)
-			}
-			if gotFile != f {
-				t.Errorf("expected cmd.Stdout to be the user-provided *os.File "+
-					"(fd %d), got a different *os.File (fd %d). The fd-pass "+
-					"fast path is broken; sendfile/zero-copy will not apply.",
-					f.Fd(), gotFile.Fd())
-			}
+			require.Truef(t, ok, "expected cmd.Stdout to be *os.File, got %T", s.cmd.Stdout)
+			assert.Samef(
+				t, f, gotFile,
+				"expected cmd.Stdout to be the user-provided *os.File (fd %d), "+
+					"got a different *os.File (fd %d). The fd-pass fast path is broken; "+
+					"sendfile/zero-copy will not apply.",
+				f.Fd(), gotFile.Fd(),
+			)
 		})
 	}
 }
@@ -85,9 +83,7 @@ func TestCommandStageStdoutFastPathThroughPipeline(t *testing.T) {
 			defer cancel()
 
 			f, err := os.CreateTemp(t.TempDir(), "stdout")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			t.Cleanup(func() { _ = f.Close() })
 
 			cmd := exec.Command("true")
@@ -95,22 +91,19 @@ func TestCommandStageStdoutFastPathThroughPipeline(t *testing.T) {
 
 			p := New(tc.option(f))
 			p.Add(s)
-			if err := p.Start(ctx); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
+			require.NoError(t, p.Start(ctx))
 			stdoutAfterStart := s.cmd.Stdout
 			t.Cleanup(func() { _ = p.Wait() })
 
 			gotFile, ok := stdoutAfterStart.(*os.File)
-			if !ok {
-				t.Fatalf("expected cmd.Stdout to be *os.File, got %T", stdoutAfterStart)
-			}
-			if gotFile != f {
-				t.Errorf("expected cmd.Stdout to be the user-provided *os.File "+
-					"(fd %d), got a different *os.File (fd %d). The fd-pass "+
-					"fast path is broken; sendfile/zero-copy will not apply.",
-					f.Fd(), gotFile.Fd())
-			}
+			require.Truef(t, ok, "expected cmd.Stdout to be *os.File, got %T", stdoutAfterStart)
+			assert.Samef(
+				t, f, gotFile,
+				"expected cmd.Stdout to be the user-provided *os.File (fd %d), "+
+					"got a different *os.File (fd %d). The fd-pass fast path is broken; "+
+					"sendfile/zero-copy will not apply.",
+				f.Fd(), gotFile.Fd(),
+			)
 		})
 	}
 }

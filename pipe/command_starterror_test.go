@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/github/go-pipe/v2/pipe"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCommandStageStartFailureNoRace verifies that when `cmd.Start()`
@@ -23,9 +25,7 @@ func TestCommandStageStartFailureNoRace(t *testing.T) {
 		var buf bytes.Buffer
 		p := pipe.New(pipe.WithStdout(&buf))
 		p.Add(pipe.CommandStage("nope", exec.Command("this-binary-does-not-exist-xyz123")))
-		if err := p.Run(context.Background()); err == nil {
-			t.Fatalf("expected error from non-existent command, got nil")
-		}
+		require.Error(t, p.Run(context.Background()))
 		_ = buf.String()
 	}
 }
@@ -54,10 +54,6 @@ func TestCommandStageStartFailureClosesLateClosers(t *testing.T) {
 	w := &trackingWriteCloser{}
 	p := pipe.New(pipe.WithStdoutCloser(w))
 	p.Add(pipe.CommandStage("nope", exec.Command("this-binary-does-not-exist-xyz123")))
-	if err := p.Run(context.Background()); err == nil {
-		t.Fatalf("expected error from non-existent command, got nil")
-	}
-	if !w.closed.Load() {
-		t.Fatalf("expected late closer to be closed after Start() failure")
-	}
+	require.Error(t, p.Run(context.Background()))
+	assert.True(t, w.closed.Load(), "expected late closer to be closed after Start() failure")
 }

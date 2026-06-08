@@ -5,6 +5,9 @@ import (
 	"context"
 	"io"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGoStageReceivesConcreteWriterToStdin verifies that a Function stage
@@ -22,14 +25,8 @@ func TestGoStageReceivesConcreteWriterToStdin(t *testing.T) {
 		return err
 	}))
 
-	if err := p.Run(context.Background()); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	require.NoError(t, p.Run(context.Background()))
 
-	if got != io.Reader(src) {
-		t.Fatalf("StageFunc stdin = %T %p, want *bytes.Reader %p", got, got, src)
-	}
-	if _, ok := got.(io.WriterTo); !ok {
-		t.Fatalf("stdin %T does not expose io.WriterTo fast path", got)
-	}
+	assert.Same(t, src, got)
+	assert.Implements(t, (*io.WriterTo)(nil), got)
 }

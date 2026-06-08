@@ -5,11 +5,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/github/go-pipe/v2/pipe"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const panicChildEnv = "GO_PIPE_FUNCTION_PANIC_CHILD"
@@ -32,15 +33,10 @@ func TestFunctionPanicWithoutHandlerPropagates(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	output := string(out)
 
-	if err == nil {
-		t.Fatalf("expected subprocess to crash from a propagated panic, but it exited 0\noutput:\n%s", output)
-	}
-	if strings.Contains(output, "SURVIVED") {
-		t.Fatalf("panic was swallowed: Run returned instead of propagating\noutput:\n%s", output)
-	}
-	if !strings.Contains(output, "panic:") || !strings.Contains(output, panicSentinel) {
-		t.Fatalf("expected a propagated panic mentioning %q, got:\n%s", panicSentinel, output)
-	}
+	require.Errorf(t, err, "expected subprocess to crash from a propagated panic, but it exited 0\noutput:\n%s", output)
+	assert.NotContains(t, output, "SURVIVED", "panic was swallowed: Run returned instead of propagating")
+	assert.Contains(t, output, "panic:")
+	assert.Contains(t, output, panicSentinel)
 }
 
 // runPanicChild runs a pipeline whose only stage is a `Function` that panics,

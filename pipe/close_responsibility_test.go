@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // readCloseSpy records whether Close was called.
@@ -53,23 +56,15 @@ func TestGoStageHonorsCloseFlags(t *testing.T) {
 				return err
 			})
 
-			if err := s.Start(
+			require.NoError(t, s.Start(
 				context.Background(), StageOptions{},
 				in, !tc.leaveIn,
 				out, !tc.leaveOut,
-			); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
-			if err := s.Wait(); err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			))
+			require.NoError(t, s.Wait())
 
-			if got, want := in.closed.Load(), !tc.leaveIn; got != want {
-				t.Errorf("stdin closed = %v, want %v (closeStdin=%v)", got, want, !tc.leaveIn)
-			}
-			if got, want := out.closed.Load(), !tc.leaveOut; got != want {
-				t.Errorf("stdout closed = %v, want %v (closeStdout=%v)", got, want, !tc.leaveOut)
-			}
+			assert.Equal(t, !tc.leaveIn, in.closed.Load(), "closeStdin=%v", !tc.leaveIn)
+			assert.Equal(t, !tc.leaveOut, out.closed.Load(), "closeStdout=%v", !tc.leaveOut)
 		})
 	}
 }
@@ -79,21 +74,13 @@ func TestStagePanicsWhenOwnedStreamIsNotCloseable(t *testing.T) {
 		return nil
 	})
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected Start to panic")
-		}
-		if !strings.Contains(r.(string), "does not implement io.Closer") {
-			t.Fatalf("unexpected panic: %v", r)
-		}
-	}()
-
-	_ = s.Start(
-		context.Background(), StageOptions{},
-		strings.NewReader("not closeable"), true,
-		nil, false,
-	)
+	assert.PanicsWithValue(t, "stage asked to close *strings.Reader, which does not implement io.Closer", func() {
+		_ = s.Start(
+			context.Background(), StageOptions{},
+			strings.NewReader("not closeable"), true,
+			nil, false,
+		)
+	})
 }
 
 // TestCommandStageHonorsCloseStdin verifies that a command stage closes a
@@ -111,20 +98,14 @@ func TestCommandStageHonorsCloseStdin(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(
+			require.NoError(t, s.Start(
 				context.Background(), StageOptions{},
 				in, !leave,
 				nil, false,
-			); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
-			if err := s.Wait(); err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			))
+			require.NoError(t, s.Wait())
 
-			if got, want := in.closed.Load(), !leave; got != want {
-				t.Errorf("stdin closed = %v, want %v (closeStdin=%v)", got, want, !leave)
-			}
+			assert.Equal(t, !leave, in.closed.Load(), "closeStdin=%v", !leave)
 		})
 	}
 }
@@ -144,20 +125,14 @@ func TestCommandStageHonorsCloseStdout(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			if err := s.Start(
+			require.NoError(t, s.Start(
 				context.Background(), StageOptions{},
 				nil, false,
 				out, !leave,
-			); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
-			if err := s.Wait(); err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			))
+			require.NoError(t, s.Wait())
 
-			if got, want := out.closed.Load(), !leave; got != want {
-				t.Errorf("stdout closed = %v, want %v (closeStdout=%v)", got, want, !leave)
-			}
+			assert.Equal(t, !leave, out.closed.Load(), "closeStdout=%v", !leave)
 		})
 	}
 }
