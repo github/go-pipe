@@ -301,7 +301,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// We need to decide how to start the stages, especially what
 	// pipes to use to connect adjacent stages (`os.Pipe()` vs.
 	// `io.Pipe()`) based on the two stages' requirements.
-	stageStarters := make([]stageStarter, len(p.stages), len(p.stages))
+	stageStarters := make([]stageStarter, len(p.stages))
 
 	// Collect information about each stage's type and requirements:
 	for i, s := range p.stages {
