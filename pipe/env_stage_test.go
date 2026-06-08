@@ -1,10 +1,12 @@
 package pipe
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func collectEnvVars(ctx context.Context, env Env) []EnvVar {
@@ -46,6 +48,88 @@ func TestWithExtraEnvAddsStageLocalVars(t *testing.T) {
 	}
 	if want := []EnvVar{{Key: "PIPELINE", Value: "present"}}; !reflect.DeepEqual(secondStageVars, want) {
 		t.Fatalf("second stage vars = %#v, want %#v", secondStageVars, want)
+	}
+}
+
+func TestWithExtraEnvDoesNotShareVarsBackingArray(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	allowFirstStage := make(chan struct{})
+	var firstStageVars []EnvVar
+	var secondStageVars []EnvVar
+
+	baseVars := make([]AppendVars, 0, 4)
+	for _, env := range []EnvVar{
+		{Key: "PIPELINE1", Value: "present"},
+		{Key: "PIPELINE2", Value: "present"},
+		{Key: "PIPELINE3", Value: "present"},
+	} {
+		env := env
+		baseVars = append(baseVars, func(_ context.Context, vars []EnvVar) []EnvVar {
+			return append(vars, env)
+		})
+	}
+
+	p := New(func(p *Pipeline) {
+		p.env.Vars = baseVars
+	})
+	p.Add(
+		WithExtraEnv(
+			Function("first", func(ctx context.Context, env Env, _ io.Reader, _ io.Writer) error {
+				select {
+				case <-allowFirstStage:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				firstStageVars = collectEnvVars(ctx, env)
+				return nil
+			}),
+			[]EnvVar{{Key: "STAGE", Value: "first"}},
+		),
+		WithExtraEnv(
+			Function("second", func(ctx context.Context, env Env, _ io.Reader, _ io.Writer) error {
+				secondStageVars = collectEnvVars(ctx, env)
+				close(allowFirstStage)
+				return nil
+			}),
+			[]EnvVar{{Key: "STAGE", Value: "second"}},
+		),
+	)
+
+	if err := p.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	wantBase := []EnvVar{
+		{Key: "PIPELINE1", Value: "present"},
+		{Key: "PIPELINE2", Value: "present"},
+		{Key: "PIPELINE3", Value: "present"},
+	}
+	if want := append(append([]EnvVar(nil), wantBase...), EnvVar{Key: "STAGE", Value: "first"}); !reflect.DeepEqual(firstStageVars, want) {
+		t.Fatalf("first stage vars = %#v, want %#v", firstStageVars, want)
+	}
+	if want := append(append([]EnvVar(nil), wantBase...), EnvVar{Key: "STAGE", Value: "second"}); !reflect.DeepEqual(secondStageVars, want) {
+		t.Fatalf("second stage vars = %#v, want %#v", secondStageVars, want)
+	}
+}
+
+func TestWithExtraEnvAddsCommandEnv(t *testing.T) {
+	ctx := context.Background()
+	stdout := &bytes.Buffer{}
+
+	p := New(WithStdout(stdout))
+	p.Add(WithExtraEnv(
+		Command("sh", "-c", "printf %s \"$STAGE\""),
+		[]EnvVar{{Key: "STAGE", Value: "command"}},
+	))
+
+	if err := p.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := stdout.String(), "command"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 

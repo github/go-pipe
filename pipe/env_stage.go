@@ -31,7 +31,7 @@ func (s *stageWithExtraEnv) Start(
 	stdin io.Reader, closeStdin bool,
 	stdout io.Writer, closeStdout bool,
 ) error {
-	opts.Vars = append(opts.Vars, func(_ context.Context, vars []EnvVar) []EnvVar {
+	opts.Vars = append(opts.Vars[:len(opts.Vars):len(opts.Vars)], func(_ context.Context, vars []EnvVar) []EnvVar {
 		return append(vars, s.env...)
 	})
 	return s.inner.Start(ctx, opts, stdin, closeStdin, stdout, closeStdout)
