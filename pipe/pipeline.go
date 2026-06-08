@@ -306,9 +306,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// Collect information about each stage's type and requirements:
 	for i, s := range p.stages {
 		stageStarters[i].requirements = s.Requirements()
-	}
 
-	for i, s := range p.stages {
 		err := stageStarters[i].requirements.validate(
 			s,
 			i > 0 || p.stdin != nil,
