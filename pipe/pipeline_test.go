@@ -474,6 +474,71 @@ func TestIgnoredSIGPIPE(t *testing.T) {
 	assert.EqualValues(t, "foo\n", out)
 }
 
+func TestGoProducerSeesPipeErrorWhenCommandStopsReading(t *testing.T) {
+	t.Parallel()
+
+	p := pipe.New()
+	p.Add(
+		pipe.Function(
+			"write-to-closed-command",
+			func(_ context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+				w := bufio.NewWriter(stdout)
+				for i := 0; i < 100000; i++ {
+					if _, err := fmt.Fprintln(w, i); err != nil {
+						return err
+					}
+				}
+				return w.Flush()
+			},
+		),
+		pipe.Command("true"),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := p.Run(ctx)
+	require.Error(t, err)
+	assert.True(t, pipe.IsPipeError(err), "expected a pipe error, got %v", err)
+}
+
+func TestIgnoredPipeErrorStillAllowsStatefulProducerToFinish(t *testing.T) {
+	t.Parallel()
+
+	const total = 100000
+	processed := 0
+	p := pipe.New()
+	p.Add(
+		pipe.IgnoreError(
+			pipe.Function(
+				"stateful-producer",
+				func(_ context.Context, _ pipe.Env, _ io.Reader, stdout io.Writer) error {
+					w := bufio.NewWriter(stdout)
+					var writeErr error
+					for i := 0; i < total; i++ {
+						processed++
+						if writeErr == nil {
+							if _, err := fmt.Fprintln(w, i); err != nil {
+								writeErr = err
+							}
+						}
+					}
+					if writeErr == nil {
+						writeErr = w.Flush()
+					}
+					return writeErr
+				},
+			),
+			pipe.IsPipeError,
+		),
+		pipe.Command("true"),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, p.Run(ctx))
+	assert.Equal(t, total, processed)
+}
+
 func TestFunction(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
