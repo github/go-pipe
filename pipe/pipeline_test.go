@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -286,10 +285,6 @@ func TestIOPipePipelineReadFromSlowly(t *testing.T) {
 }
 
 func TestPipelineReadFromSlowly2(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIXME: test skipped on Windows: 'seq' unavailable")
-	}
-
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -385,10 +380,6 @@ func TestPipelineStderr(t *testing.T) {
 }
 
 func TestPipelineInterrupted(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIXME: test skipped on Windows: 'sleep' unavailable")
-	}
-
 	t.Parallel()
 
 	stdout := &bytes.Buffer{}
@@ -407,10 +398,6 @@ func TestPipelineInterrupted(t *testing.T) {
 }
 
 func TestPipelineCanceled(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIXME: test skipped on Windows: 'sleep' unavailable")
-	}
-
 	t.Parallel()
 
 	stdout := &bytes.Buffer{}
@@ -434,10 +421,6 @@ func TestPipelineCanceled(t *testing.T) {
 // unread output in this case *does fit* within the OS-level pipe
 // buffer.
 func TestLittleEPIPE(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIXME: test skipped on Windows: 'sleep' unavailable")
-	}
-
 	t.Parallel()
 
 	p := pipe.New()
@@ -457,10 +440,6 @@ func TestLittleEPIPE(t *testing.T) {
 // amount of unread output in this case *does not fit* within the
 // OS-level pipe buffer.
 func TestBigEPIPE(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIXME: test skipped on Windows: 'seq' unavailable")
-	}
-
 	t.Parallel()
 
 	p := pipe.New()
@@ -480,10 +459,6 @@ func TestBigEPIPE(t *testing.T) {
 // amount of unread output in this case *does not fit* within the
 // OS-level pipe buffer.
 func TestIgnoredSIGPIPE(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIXME: test skipped on Windows: 'seq' unavailable")
-	}
-
 	t.Parallel()
 
 	p := pipe.New()
