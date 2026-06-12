@@ -58,8 +58,8 @@ func TestGoStageHonorsCloseFlags(t *testing.T) {
 
 			require.NoError(t, s.Start(
 				context.Background(), StageOptions{},
-				in, !tc.leaveIn,
-				out, !tc.leaveOut,
+				inputForTest(in, !tc.leaveIn),
+				outputForTest(out, !tc.leaveOut),
 			))
 			require.NoError(t, s.Wait())
 
@@ -69,18 +69,22 @@ func TestGoStageHonorsCloseFlags(t *testing.T) {
 	}
 }
 
-func TestStagePanicsWhenOwnedStreamIsNotCloseable(t *testing.T) {
-	s := Function("f", func(_ context.Context, _ Env, _ io.Reader, _ io.Writer) error {
-		return nil
-	})
+func TestStreamConstructorsPreserveOwnershipAndDynamicType(t *testing.T) {
+	borrowedInput := strings.NewReader("borrowed")
+	assert.Same(t, borrowedInput, Input(borrowedInput).Reader())
+	assert.Nil(t, Input(borrowedInput).Closer())
 
-	assert.PanicsWithValue(t, "stage asked to close *strings.Reader, which does not implement io.Closer", func() {
-		_ = s.Start(
-			context.Background(), StageOptions{},
-			strings.NewReader("not closeable"), true,
-			nil, false,
-		)
-	})
+	ownedInput := &readCloseSpy{Reader: strings.NewReader("owned")}
+	assert.Same(t, ownedInput, ClosingInput(ownedInput).Reader())
+	assert.Same(t, ownedInput, ClosingInput(ownedInput).Closer())
+
+	borrowedOutput := &strings.Builder{}
+	assert.Same(t, borrowedOutput, Output(borrowedOutput).Writer())
+	assert.Nil(t, Output(borrowedOutput).Closer())
+
+	ownedOutput := &writeCloseSpy{Writer: io.Discard}
+	assert.Same(t, ownedOutput, ClosingOutput(ownedOutput).Writer())
+	assert.Same(t, ownedOutput, ClosingOutput(ownedOutput).Closer())
 }
 
 // TestCommandStageHonorsCloseStdin verifies that a command stage closes a
@@ -100,8 +104,8 @@ func TestCommandStageHonorsCloseStdin(t *testing.T) {
 
 			require.NoError(t, s.Start(
 				context.Background(), StageOptions{},
-				in, !leave,
-				nil, false,
+				inputForTest(in, !leave),
+				Output(nil),
 			))
 			require.NoError(t, s.Wait())
 
@@ -127,12 +131,26 @@ func TestCommandStageHonorsCloseStdout(t *testing.T) {
 
 			require.NoError(t, s.Start(
 				context.Background(), StageOptions{},
-				nil, false,
-				out, !leave,
+				Input(nil),
+				outputForTest(out, !leave),
 			))
 			require.NoError(t, s.Wait())
 
 			assert.Equal(t, !leave, out.closed.Load(), "closeStdout=%v", !leave)
 		})
 	}
+}
+
+func inputForTest(r io.ReadCloser, closing bool) InputStream {
+	if closing {
+		return ClosingInput(r)
+	}
+	return Input(r)
+}
+
+func outputForTest(w io.WriteCloser, closing bool) OutputStream {
+	if closing {
+		return ClosingOutput(w)
+	}
+	return Output(w)
 }

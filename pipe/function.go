@@ -78,19 +78,17 @@ func (s *goStage) Requirements() StageRequirements {
 
 func (s *goStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, closeStdin bool,
-	stdout io.Writer, closeStdout bool,
+	stdin InputStream, stdout OutputStream,
 ) error {
-	stdinCloser := ownedCloser(stdin, closeStdin)
-	stdoutCloser := ownedCloser(stdout, closeStdout)
-
-	r := stdin
+	r := stdin.Reader()
+	stdinCloser := stdin.Closer()
 	if r == nil {
 		// treat nil as empty input.
 		r = strings.NewReader("")
 	}
 
-	w := stdout
+	w := stdout.Writer()
+	stdoutCloser := stdout.Closer()
 	if w == nil {
 		// treat nil output as /dev/null
 		w = io.Discard

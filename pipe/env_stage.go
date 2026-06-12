@@ -1,9 +1,6 @@
 package pipe
 
-import (
-	"context"
-	"io"
-)
+import "context"
 
 // WithExtraEnv returns a Stage that adds env to the environment seen by inner.
 func WithExtraEnv(inner Stage, env []EnvVar) Stage {
@@ -40,13 +37,12 @@ func (s *stageWithExtraEnv) Requirements() StageRequirements {
 
 func (s *stageWithExtraEnv) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, closeStdin bool,
-	stdout io.Writer, closeStdout bool,
+	stdin InputStream, stdout OutputStream,
 ) error {
 	opts.Vars = append(opts.Vars[:len(opts.Vars):len(opts.Vars)], func(_ context.Context, vars []EnvVar) []EnvVar {
 		return append(vars, s.env...)
 	})
-	return s.inner.Start(ctx, opts, stdin, closeStdin, stdout, closeStdout)
+	return s.inner.Start(ctx, opts, stdin, stdout)
 }
 
 func (s *stageWithExtraEnv) Wait() error {

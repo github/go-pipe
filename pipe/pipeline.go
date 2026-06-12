@@ -219,10 +219,8 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 
 type stageStarter struct {
 	requirements StageRequirements
-	stdin        io.Reader
-	stdinCloser  io.Closer
-	stdout       io.Writer
-	stdoutCloser io.Closer
+	stdin        InputStream
+	stdout       OutputStream
 }
 
 func (requirement StreamRequirement) validate() error {
@@ -324,15 +322,16 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	if p.stdin != nil {
 		// Arrange for the input of the 0th stage to come from
 		// `p.stdin`:
-		stageStarters[0].stdin = p.stdin
-		stageStarters[0].stdinCloser = p.stdinCloser
+		stageStarters[0].stdin = Input(p.stdin)
 	}
 
 	if p.stdout != nil {
 		i := len(p.stages) - 1
 		ss := &stageStarters[i]
-		ss.stdout = p.stdout
-		ss.stdoutCloser = p.stdoutCloser
+		ss.stdout = OutputStream{
+			writer: p.stdout,
+			closer: p.stdoutCloser,
+		}
 	}
 
 	// Clean up any processes and pipes that have been created. `i` is
@@ -342,8 +341,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// Close the pipe that the previous stage was writing to.
 		// That should cause it to exit even if it's not minding
 		// its context.
-		if closeFailedStageStdin && stageStarters[i].stdinCloser != nil {
-			_ = stageStarters[i].stdinCloser.Close()
+		if closeFailedStageStdin {
+			stageStarters[i].stdin.Close()
 		}
 		if i < len(p.stages)-1 && p.stdoutCloser != nil {
 			_ = p.stdoutCloser.Close()
@@ -381,23 +380,18 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			if err != nil {
 				return abort(i, err, true)
 			}
-			nextSS.stdin = nextStdin
-			nextSS.stdinCloser = nextStdin
-			ss.stdout = stdout
-			ss.stdoutCloser = stdout
+			nextSS.stdin = ClosingInput(nextStdin)
+			ss.stdout = ClosingOutput(stdout)
 		} else {
 			nextStdin, stdout := io.Pipe()
-			nextSS.stdin = nextStdin
-			nextSS.stdinCloser = nextStdin
-			ss.stdout = stdout
-			ss.stdoutCloser = stdout
+			nextSS.stdin = ClosingInput(nextStdin)
+			ss.stdout = ClosingOutput(stdout)
 		}
 		if err := s.Start(
 			ctx, p.stageOptions(),
-			ss.stdin, ss.stdinCloser != nil,
-			ss.stdout, ss.stdoutCloser != nil,
+			ss.stdin, ss.stdout,
 		); err != nil {
-			nextSS.stdinCloser.Close()
+			nextSS.stdin.Close()
 			return abort(i, err, false)
 		}
 	}
@@ -412,8 +406,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 		if err := s.Start(
 			ctx, p.stageOptions(),
-			ss.stdin, ss.stdinCloser != nil,
-			ss.stdout, ss.stdoutCloser != nil,
+			ss.stdin, ss.stdout,
 		); err != nil {
 			return abort(i, err, false)
 		}

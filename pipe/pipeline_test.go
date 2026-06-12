@@ -615,15 +615,10 @@ func (s ErrorStartingStage) Requirements() pipe.StageRequirements {
 
 func (s ErrorStartingStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	stdin io.Reader, closeStdin bool,
-	stdout io.Writer, closeStdout bool,
+	stdin pipe.InputStream, stdout pipe.OutputStream,
 ) error {
-	if closeStdin {
-		_ = stdin.(io.Closer).Close()
-	}
-	if closeStdout {
-		_ = stdout.(io.Closer).Close()
-	}
+	stdin.Close()
+	stdout.Close()
 	return s.err
 }
 
@@ -647,18 +642,13 @@ func (s requirementStage) Requirements() pipe.StageRequirements {
 
 func (s requirementStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	stdin io.Reader, closeStdin bool,
-	stdout io.Writer, closeStdout bool,
+	stdin pipe.InputStream, stdout pipe.OutputStream,
 ) error {
 	if s.started != nil {
 		*s.started = true
 	}
-	if closeStdin {
-		_ = stdin.(io.Closer).Close()
-	}
-	if closeStdout {
-		_ = stdout.(io.Closer).Close()
-	}
+	stdin.Close()
+	stdout.Close()
 	return nil
 }
 

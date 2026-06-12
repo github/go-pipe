@@ -42,7 +42,12 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			require.NoError(t, s.Start(ctx, StageOptions{}, nil, false, f, tc.closeStdout))
+			stdout := OutputStream{writer: f}
+			if tc.closeStdout {
+				stdout = ClosingOutput(f)
+			}
+
+			require.NoError(t, s.Start(ctx, StageOptions{}, Input(nil), stdout))
 			t.Cleanup(func() { _ = s.Wait() })
 
 			gotFile, ok := s.cmd.Stdout.(*os.File)
