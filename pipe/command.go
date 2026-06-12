@@ -118,29 +118,6 @@ func (s *commandStage) Start(
 		}
 	}
 
-	if stdout != nil {
-		if f, ok := stdout.(*os.File); ok {
-			s.cmd.Stdout = f
-			if stdoutCloser != nil {
-				earlyClosers = append(earlyClosers, stdoutCloser)
-			}
-		} else {
-			// Route the copy through our own pipe so we can use a
-			// pooled buffer rather than letting exec.Cmd allocate a
-			// fresh 32KB buffer for its internal io.Copy.
-			ec, err := s.setupPooledStdout(stdout)
-			if err != nil {
-				return err
-			}
-			earlyClosers = append(earlyClosers, ec)
-			if stdoutCloser != nil {
-				s.lateClosers = append(s.lateClosers, stdoutCloser)
-			}
-		}
-	} else if stdoutCloser != nil {
-		s.lateClosers = append(s.lateClosers, stdoutCloser)
-	}
-
 	closeEarlyClosers := func() {
 		for _, closer := range earlyClosers {
 			_ = closer.Close()
@@ -153,6 +130,30 @@ func (s *commandStage) Start(
 		closeEarlyClosers()
 		_ = s.wg.Wait()
 		_ = s.closeLateClosers()
+	}
+
+	if stdout != nil {
+		if f, ok := stdout.(*os.File); ok {
+			s.cmd.Stdout = f
+			if stdoutCloser != nil {
+				earlyClosers = append(earlyClosers, stdoutCloser)
+			}
+		} else {
+			if stdoutCloser != nil {
+				s.lateClosers = append(s.lateClosers, stdoutCloser)
+			}
+			// Route the copy through our own pipe so we can use a
+			// pooled buffer rather than letting exec.Cmd allocate a
+			// fresh 32KB buffer for its internal io.Copy.
+			ec, err := s.setupPooledStdout(stdout)
+			if err != nil {
+				cleanupOnStartFailure()
+				return err
+			}
+			earlyClosers = append(earlyClosers, ec)
+		}
+	} else if stdoutCloser != nil {
+		s.lateClosers = append(s.lateClosers, stdoutCloser)
 	}
 
 	// If the caller hasn't arranged otherwise, read the command's
