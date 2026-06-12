@@ -48,6 +48,12 @@ type ErrorMatcher func(err error) bool
 // the functions from the standard library that has the same signature
 // (e.g., `os.IsTimeout`), or some combination of these (e.g.,
 // `AnyError(IsSIGPIPE, os.IsTimeout)`).
+//
+// `IgnoreError` only suppresses the error returned by the wrapped
+// stage. If a producer ignores pipe errors because a later stage can
+// stop reading early, the producer is still responsible for keeping any
+// producer-owned state, metrics, cursors, or other side effects
+// consistent before returning the ignored error.
 func IgnoreError(s Stage, em ErrorMatcher) Stage {
 	return FilterError(s,
 		func(err error) error {
@@ -128,7 +134,11 @@ var (
 
 	// IsPipeError is an `ErrorMatcher` that matches a few different
 	// errors that typically result if a stage writes to a subsequent
-	// stage that has stopped reading from its stdin. Use like
+	// stage that has stopped reading from its stdin. This is commonly
+	// useful with `IgnoreError` for stateless producer stages whose only
+	// job is writing output. Stateful producers should continue any
+	// producer-owned state updates needed for consistency before
+	// returning the pipe error for `IgnoreError` to suppress. Use like
 	//
 	//     p.Add(IgnoreError(someStage, IsPipeError))
 	IsPipeError = AnyError(IsSIGPIPE, IsEPIPE, IsErrClosedPipe)

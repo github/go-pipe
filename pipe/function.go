@@ -17,6 +17,15 @@ import (
 // Neither `stdin` nor `stdout` are necessarily buffered. If the
 // `StageFunc` requires buffering, it needs to arrange that itself.
 //
+// A later stage can stop reading before this function has written all
+// of its output. In that case, writes to `stdout` can fail with an
+// error matched by `IsPipeError`. If the function only writes output
+// and is otherwise stateless, callers can usually wrap the stage with
+// `IgnoreError(stage, IsPipeError)`. If the function also updates
+// producer-owned state, metrics, cursors, or other side effects that
+// depend on how much output was produced, it should bring those side
+// effects to a consistent point before returning the write error.
+//
 // A `StageFunc` is run in a separate goroutine, so it must be careful
 // to synchronize any data access aside from reading and writing.
 type StageFunc func(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) error
