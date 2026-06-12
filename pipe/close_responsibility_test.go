@@ -34,9 +34,9 @@ func (w *writeCloseSpy) Close() error {
 	return nil
 }
 
-// TestGoStageHonorsCloseFlags verifies that a Function stage closes
-// stdin/stdout iff the corresponding close flag is true.
-func TestGoStageHonorsCloseFlags(t *testing.T) {
+// TestGoStageHonorsStreamOwnership verifies that a Function stage closes
+// stdin/stdout iff the corresponding stream is closing.
+func TestGoStageHonorsStreamOwnership(t *testing.T) {
 	cases := []struct {
 		name              string
 		leaveIn, leaveOut bool
@@ -63,8 +63,8 @@ func TestGoStageHonorsCloseFlags(t *testing.T) {
 			))
 			require.NoError(t, s.Wait())
 
-			assert.Equal(t, !tc.leaveIn, in.closed.Load(), "closeStdin=%v", !tc.leaveIn)
-			assert.Equal(t, !tc.leaveOut, out.closed.Load(), "closeStdout=%v", !tc.leaveOut)
+			assert.Equal(t, !tc.leaveIn, in.closed.Load(), "closing stdin=%v", !tc.leaveIn)
+			assert.Equal(t, !tc.leaveOut, out.closed.Load(), "closing stdout=%v", !tc.leaveOut)
 		})
 	}
 }
@@ -88,8 +88,8 @@ func TestStreamConstructorsPreserveOwnershipAndDynamicType(t *testing.T) {
 }
 
 // TestCommandStageHonorsCloseStdin verifies that a command stage closes a
-// non-file stdin (a "late" closer) iff closeStdin is true. An empty
-// reader is used so exec.Cmd's input-copy goroutine sees EOF promptly.
+// non-file stdin (a "late" closer) iff the input stream is closing. An
+// empty reader is used so exec.Cmd's input-copy goroutine sees EOF promptly.
 func TestCommandStageHonorsCloseStdin(t *testing.T) {
 	for _, leave := range []bool{false, true} {
 		name := "owns stdin"
@@ -109,14 +109,14 @@ func TestCommandStageHonorsCloseStdin(t *testing.T) {
 			))
 			require.NoError(t, s.Wait())
 
-			assert.Equal(t, !leave, in.closed.Load(), "closeStdin=%v", !leave)
+			assert.Equal(t, !leave, in.closed.Load(), "closing stdin=%v", !leave)
 		})
 	}
 }
 
 // TestCommandStageHonorsCloseStdout verifies the stdout counterpart: a
 // non-file stdout (routed through the pooled-copy path) is closed iff
-// closeStdout is true.
+// the output stream is closing.
 func TestCommandStageHonorsCloseStdout(t *testing.T) {
 	for _, leave := range []bool{false, true} {
 		name := "owns stdout"
@@ -136,7 +136,7 @@ func TestCommandStageHonorsCloseStdout(t *testing.T) {
 			))
 			require.NoError(t, s.Wait())
 
-			assert.Equal(t, !leave, out.closed.Load(), "closeStdout=%v", !leave)
+			assert.Equal(t, !leave, out.closed.Load(), "closing stdout=%v", !leave)
 		})
 	}
 }

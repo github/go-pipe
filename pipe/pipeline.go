@@ -347,16 +347,19 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		}
 	}
 
-	// Clean up any processes and pipes that have been created. `i` is
-	// the index of the stage that failed to start (whose output pipe
-	// has already been cleaned up if necessary).
+	// Clean up any processes and pipes that have been created. `i` is the
+	// index of the stage that failed to start. If the stage already received
+	// its streams, it owns any closing stream.
 	abort := func(i int, err error, closeFailedStageStdin bool) error {
-		// Close the pipe that the previous stage was writing to.
-		// That should cause it to exit even if it's not minding
-		// its context.
+		// If the failing stage never received its stdin, close the pipe that
+		// the previous stage was writing to. That should cause it to exit
+		// even if it's not minding its context.
 		if closeFailedStageStdin {
 			stageStarters[i].stdin.Close()
 		}
+
+		// If stdout was supplied with WithStdoutCloser but the final stage
+		// was never started, then the pipeline still owns that closer.
 		if i < len(p.stages)-1 && p.stdoutCloser != nil {
 			_ = p.stdoutCloser.Close()
 		}

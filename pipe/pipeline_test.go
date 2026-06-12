@@ -83,13 +83,15 @@ func TestPipelineFirstStageFailsToStart(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	startErr := errors.New("foo")
+	stdout := &closeTrackingWriter{}
 
-	p := pipe.New()
+	p := pipe.New(pipe.WithStdoutCloser(stdout))
 	p.Add(
 		ErrorStartingStage{startErr},
 		ErrorStartingStage{errors.New("this error should never happen")},
 	)
 	assert.ErrorIs(t, p.Run(ctx), startErr)
+	assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 }
 
 func TestPipelineFirstStageFailsToStartClosesStdoutCloser(t *testing.T) {
@@ -118,6 +120,22 @@ func TestPipelineSecondStageFailsToStart(t *testing.T) {
 		ErrorStartingStage{startErr},
 	)
 	assert.ErrorIs(t, p.Run(ctx), startErr)
+}
+
+func TestPipelineMiddleStageFailsToStartClosesUnstartedStdoutCloser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	startErr := errors.New("foo")
+	stdout := &closeTrackingWriter{}
+
+	p := pipe.New(pipe.WithStdoutCloser(stdout))
+	p.Add(
+		seqFunction(20000),
+		ErrorStartingStage{startErr},
+		ErrorStartingStage{errors.New("this error should never happen")},
+	)
+	assert.ErrorIs(t, p.Run(ctx), startErr)
+	assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 }
 
 func TestPipelineSingleCommandOutput(t *testing.T) {

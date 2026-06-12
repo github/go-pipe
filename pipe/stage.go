@@ -50,17 +50,23 @@ import (
 //	f.Close() // close our copy
 //	cmd.Wait()
 //
-// If the stage is an external command and one of its arguments is not
-// an `*os.File`, then `exec.Cmd` will take care of creating an
-// `os.Pipe()`, copying from the provided argument in/out of the pipe,
-// and eventually closing both ends of the pipe. The stage must close
-// the argument itself, but only _after_ the external command has
+// If the stage is an external command and its stdin is not an
+// `*os.File`, then `exec.Cmd` will take care of creating an
+// `os.Pipe()`, copying from the provided reader into the pipe, and
+// eventually closing both ends of the pipe. The stage must close the
+// provided stdin itself, but only _after_ the external command has
 // finished, like so:
 //
-//	cmd.Stdin = r // Similarly for stdout
+//	cmd.Stdin = r
 //	cmd.Start(…)
 //	cmd.Wait()
 //	r.Close()
+//
+// If the stage is an external command and its stdout is not an
+// `*os.File`, the stage creates a pipe, passes the write end to the
+// command, and copies from the read end to the provided writer. The
+// stage must close the provided stdout itself, but only _after_ the
+// external command and the copy have finished.
 //
 // If the stage is a Go function, then it holds the only copy of
 // stdin/stdout, so it must wait until the function is done before
