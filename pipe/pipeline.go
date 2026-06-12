@@ -99,7 +99,9 @@ func WithDir(dir string) Option {
 	}
 }
 
-// WithStdin assigns stdin to the first command in the pipeline.
+// WithStdin assigns stdin to the first command in the pipeline. The
+// caller retains ownership of stdin; the pipeline will not close it,
+// even if `Start()` returns an error.
 func WithStdin(stdin io.Reader) Option {
 	return func(p *Pipeline) {
 		p.stdin = stdin
@@ -107,7 +109,9 @@ func WithStdin(stdin io.Reader) Option {
 	}
 }
 
-// WithStdout assigns stdout to the last command in the pipeline.
+// WithStdout assigns stdout to the last command in the pipeline. The
+// caller retains ownership of stdout; the pipeline will not close it,
+// even if `Start()` returns an error.
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
 		p.stdout = stdout
@@ -116,7 +120,9 @@ func WithStdout(stdout io.Writer) Option {
 }
 
 // WithStdoutCloser assigns stdout to the last command in the
-// pipeline, and closes stdout when it's done.
+// pipeline, and closes stdout when the pipeline is done with it. The
+// pipeline is responsible for closing stdout even if `Start()` returns
+// an error.
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return func(p *Pipeline) {
 		p.stdout = stdout
@@ -270,6 +276,13 @@ func (p *Pipeline) stageOptions() StageOptions {
 // Start starts the commands in the pipeline. If `Start()` exits
 // without an error, `Wait()` must also be called, to allow all
 // resources to be freed.
+//
+// If `Start()` returns an error, `Wait()` must not be called. Before
+// returning an error, `Start()` cancels and waits for any stages that
+// were started, closes any inter-stage pipes that the pipeline owns,
+// and closes stdout if it was supplied with `WithStdoutCloser()`.
+// Streams supplied with `WithStdin()` or `WithStdout()` remain owned by
+// the caller and are not closed by the pipeline.
 func (p *Pipeline) Start(ctx context.Context) error {
 	if p.hasStarted() {
 		panic("attempt to start a pipeline that has already started")
@@ -513,7 +526,9 @@ func (p *Pipeline) Wait() error {
 	return nil
 }
 
-// Run starts and waits for the commands in the pipeline.
+// Run starts and waits for the commands in the pipeline. If startup
+// fails, it returns the `Start()` error after `Start()` has performed
+// its failure cleanup.
 func (p *Pipeline) Run(ctx context.Context) error {
 	if err := p.Start(ctx); err != nil {
 		return err
