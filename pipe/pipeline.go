@@ -338,12 +338,15 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// Clean up any processes and pipes that have been created. `i` is
 	// the index of the stage that failed to start (whose output pipe
 	// has already been cleaned up if necessary).
-	abort := func(i int, err error) error {
+	abort := func(i int, err error, closeFailedStageStdin bool) error {
 		// Close the pipe that the previous stage was writing to.
 		// That should cause it to exit even if it's not minding
 		// its context.
-		if stageStarters[i].stdinCloser != nil {
+		if closeFailedStageStdin && stageStarters[i].stdinCloser != nil {
 			_ = stageStarters[i].stdinCloser.Close()
+		}
+		if i < len(p.stages)-1 && p.stdoutCloser != nil {
+			_ = p.stdoutCloser.Close()
 		}
 
 		// Kill and wait for any stages that have been started
@@ -376,7 +379,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			// Use an OS-level pipe for the communication:
 			nextStdin, stdout, err := os.Pipe()
 			if err != nil {
-				return abort(i, err)
+				return abort(i, err, true)
 			}
 			nextSS.stdin = nextStdin
 			nextSS.stdinCloser = nextStdin
@@ -395,8 +398,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			ss.stdout, ss.stdoutCloser != nil,
 		); err != nil {
 			nextSS.stdinCloser.Close()
-			ss.stdoutCloser.Close()
-			return abort(i, err)
+			return abort(i, err, false)
 		}
 	}
 
@@ -413,7 +415,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			ss.stdin, ss.stdinCloser != nil,
 			ss.stdout, ss.stdoutCloser != nil,
 		); err != nil {
-			return abort(i, err)
+			return abort(i, err, false)
 		}
 	}
 
