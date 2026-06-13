@@ -225,10 +225,10 @@ type stageStarter struct {
 }
 
 func (requirements StageRequirements) validate(s Stage, stdinConnected, stdoutConnected bool) error {
-	if err := requirements.Stdin.validate(); err != nil {
+	if err := requirements.Stdin.Validate(); err != nil {
 		return fmt.Errorf("stdin: %w", err)
 	}
-	if err := requirements.Stdout.validate(); err != nil {
+	if err := requirements.Stdout.Validate(); err != nil {
 		return fmt.Errorf("stdout: %w", err)
 	}
 	if requirements.Stdin == StreamForbidden && stdinConnected {

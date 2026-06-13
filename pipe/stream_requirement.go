@@ -26,9 +26,9 @@ const (
 	StreamForbidden
 )
 
-// validate checks that `req` has a valid value and returns an error
+// Validate checks that `req` has a valid value and returns an error
 // otherwise.
-func (requirement StreamRequirement) validate() error {
+func (requirement StreamRequirement) Validate() error {
 	switch requirement {
 	case StreamAcceptAny, StreamPreferFile, StreamForbidden:
 		return nil
