@@ -81,8 +81,8 @@ func (s *commandStage) Process() *os.Process {
 
 func (s *commandStage) Requirements() StageRequirements {
 	return StageRequirements{
-		StdinNeedsFile:  true,
-		StdoutNeedsFile: true,
+		Stdin:  StreamPreferFile,
+		Stdout: StreamPreferFile,
 	}
 }
 

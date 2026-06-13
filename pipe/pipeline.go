@@ -371,7 +371,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 		// We need to generate a pipe pair for this stage to use
 		// to communicate with its successor:
-		if ss.requirements.StdoutNeedsFile || nextSS.requirements.StdinNeedsFile {
+		if ss.requirements.Stdout == StreamPreferFile ||
+			nextSS.requirements.Stdin == StreamPreferFile {
 			// Use an OS-level pipe for the communication:
 			nextStdin, stdout, err := os.Pipe()
 			if err != nil {

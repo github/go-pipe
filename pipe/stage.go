@@ -155,15 +155,11 @@ type StageOptions struct {
 // StagePanicHandler is a function that handles panics in a pipeline's stages.
 type StagePanicHandler func(p any) error
 
-// StageRequirements describes what a Stage needs from the streams connected to
-// its stdin and stdout. The zero value is correct for stages that are happy
-// with arbitrary io.Reader/io.Writer streams, such as Function stages.
+// StageRequirements describes what a Stage needs from the streams
+// connected to its stdin and stdout. The zero value is correct for
+// stages that are happy with arbitrary io.Reader/io.Writer streams,
+// such as Function stages.
 type StageRequirements struct {
 	Stdin  StreamRequirement
 	Stdout StreamRequirement
-
-	// {Stdin,Stdout}NeedsFile indicate that, if stdio is connected, the
-	// stage requires it to be backed by an *os.File (a real file descriptor)
-	StdinNeedsFile  bool
-	StdoutNeedsFile bool
 }

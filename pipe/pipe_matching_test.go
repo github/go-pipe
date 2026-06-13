@@ -49,14 +49,10 @@ func writeCloser() io.WriteCloser {
 }
 
 func newPipeSniffingStage(
-	stdinNeedsFile bool, stdinExpectation ioExpectation,
-	stdoutNeedsFile bool, stdoutExpectation ioExpectation,
+	req pipe.StageRequirements, stdinExpectation, stdoutExpectation ioExpectation,
 ) *pipeSniffingStage {
 	return &pipeSniffingStage{
-		requirements: pipe.StageRequirements{
-			StdinNeedsFile:  stdinNeedsFile,
-			StdoutNeedsFile: stdoutNeedsFile,
-		},
+		requirements: req,
 		expect: pipeExpectations{
 			stdin:  stdinExpectation,
 			stdout: stdoutExpectation,
@@ -68,8 +64,11 @@ func newPipeSniffingFunc(
 	stdinExpectation, stdoutExpectation ioExpectation,
 ) *pipeSniffingStage {
 	return newPipeSniffingStage(
-		false, stdinExpectation,
-		false, stdoutExpectation,
+		pipe.StageRequirements{
+			Stdin:  pipe.StreamAcceptAny,
+			Stdout: pipe.StreamAcceptAny,
+		},
+		stdinExpectation, stdoutExpectation,
 	)
 }
 
@@ -77,8 +76,11 @@ func newPipeSniffingCmd(
 	stdinExpectation, stdoutExpectation ioExpectation,
 ) *pipeSniffingStage {
 	return newPipeSniffingStage(
-		true, stdinExpectation,
-		true, stdoutExpectation,
+		pipe.StageRequirements{
+			Stdin:  pipe.StreamPreferFile,
+			Stdout: pipe.StreamPreferFile,
+		},
+		stdinExpectation, stdoutExpectation,
 	)
 }
 
@@ -325,16 +327,25 @@ func TestPipeTypes(t *testing.T) {
 			opts: []pipe.Option{},
 			stages: []pipe.Stage{
 				newPipeSniffingStage(
-					false, expectNil,
-					false, expectOther,
+					pipe.StageRequirements{
+						Stdin:  pipe.StreamAcceptAny,
+						Stdout: pipe.StreamAcceptAny,
+					},
+					expectNil, expectOther,
 				),
 				newPipeSniffingStage(
-					false, expectOther,
-					true, expectFile,
+					pipe.StageRequirements{
+						Stdin:  pipe.StreamAcceptAny,
+						Stdout: pipe.StreamPreferFile,
+					},
+					expectOther, expectFile,
 				),
 				newPipeSniffingStage(
-					false, expectFile,
-					false, expectNil,
+					pipe.StageRequirements{
+						Stdin:  pipe.StreamAcceptAny,
+						Stdout: pipe.StreamAcceptAny,
+					},
+					expectFile, expectNil,
 				),
 			},
 		},
@@ -343,16 +354,25 @@ func TestPipeTypes(t *testing.T) {
 			opts: []pipe.Option{},
 			stages: []pipe.Stage{
 				newPipeSniffingStage(
-					false, expectNil,
-					false, expectFile,
+					pipe.StageRequirements{
+						Stdin:  pipe.StreamAcceptAny,
+						Stdout: pipe.StreamAcceptAny,
+					},
+					expectNil, expectFile,
 				),
 				newPipeSniffingStage(
-					true, expectFile,
-					false, expectOther,
+					pipe.StageRequirements{
+						Stdin:  pipe.StreamPreferFile,
+						Stdout: pipe.StreamAcceptAny,
+					},
+					expectFile, expectOther,
 				),
 				newPipeSniffingStage(
-					false, expectOther,
-					false, expectNil,
+					pipe.StageRequirements{
+						Stdin:  pipe.StreamAcceptAny,
+						Stdout: pipe.StreamAcceptAny,
+					},
+					expectOther, expectNil,
 				),
 			},
 		},
