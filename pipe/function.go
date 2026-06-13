@@ -90,14 +90,12 @@ func (s *goStage) Start(
 	stdin InputStream, stdout OutputStream,
 ) error {
 	r := stdin.Reader()
-	stdinCloser := stdin.Closer()
 	if r == nil {
 		// treat nil as empty input.
 		r = strings.NewReader("")
 	}
 
 	w := stdout.Writer()
-	stdoutCloser := stdout.Closer()
 	if w == nil {
 		// treat nil output as /dev/null
 		w = io.Discard
@@ -110,15 +108,11 @@ func (s *goStage) Start(
 					s.err = opts.PanicHandler(p)
 				}
 			}
-			if stdoutCloser != nil {
-				if err := stdoutCloser.Close(); err != nil && s.err == nil {
-					s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
-				}
+			if err := stdout.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
 			}
-			if stdinCloser != nil {
-				if err := stdinCloser.Close(); err != nil && s.err == nil {
-					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
-				}
+			if err := stdin.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
 			}
 			close(s.done)
 		}()

@@ -103,11 +103,10 @@ type Stage interface {
 	// `stdout` to collect its output. (`stdin.Reader()` or
 	// `stdout.Writer()` might be `nil` if the stage is to receive no
 	// input or produce no output, which might be the case for the
-	// first/last stage in a pipeline.) If `stdin` or `stdout` is
-	// closing, the stage is responsible for closing the corresponding
-	// stream, even if `Start()` returns an error. See the `Stage` type
-	// comment for more information about responsibility for closing
-	// stdin and stdout.
+	// first/last stage in a pipeline.) The stage is responsible for
+	// calling `stdin.Close()` and `stdout.Close()`, even if `Start()`
+	// returns an error. See the `Stage` type comment for more
+	// information about responsibility for closing stdin and stdout.
 	//
 	// If `Start()` returns without an error, `Wait()` must also be
 	// called, to allow all resources to be freed. If `Start()` returns

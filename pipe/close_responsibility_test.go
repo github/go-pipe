@@ -70,21 +70,29 @@ func TestGoStageHonorsStreamOwnership(t *testing.T) {
 }
 
 func TestStreamConstructorsPreserveOwnershipAndDynamicType(t *testing.T) {
-	borrowedInput := strings.NewReader("borrowed")
-	assert.Same(t, borrowedInput, Input(borrowedInput).Reader())
-	assert.Nil(t, Input(borrowedInput).Closer())
+	borrowedReader := &readCloseSpy{Reader: strings.NewReader("borrowed")}
+	borrowedInput := Input(borrowedReader)
+	assert.Same(t, borrowedReader, borrowedInput.Reader())
+	assert.NoError(t, borrowedInput.Close())
+	assert.False(t, borrowedReader.closed.Load())
 
-	ownedInput := &readCloseSpy{Reader: strings.NewReader("owned")}
-	assert.Same(t, ownedInput, ClosingInput(ownedInput).Reader())
-	assert.Same(t, ownedInput, ClosingInput(ownedInput).Closer())
+	ownedReader := &readCloseSpy{Reader: strings.NewReader("owned")}
+	ownedInput := ClosingInput(ownedReader)
+	assert.Same(t, ownedReader, ownedInput.Reader())
+	assert.NoError(t, ownedInput.Close())
+	assert.True(t, ownedReader.closed.Load())
 
-	borrowedOutput := &strings.Builder{}
-	assert.Same(t, borrowedOutput, Output(borrowedOutput).Writer())
-	assert.Nil(t, Output(borrowedOutput).Closer())
+	borrowedWriter := &writeCloseSpy{Writer: &strings.Builder{}}
+	borrowedOutput := Output(borrowedWriter)
+	assert.Same(t, borrowedWriter, borrowedOutput.Writer())
+	assert.NoError(t, borrowedOutput.Close())
+	assert.False(t, borrowedWriter.closed.Load())
 
-	ownedOutput := &writeCloseSpy{Writer: io.Discard}
-	assert.Same(t, ownedOutput, ClosingOutput(ownedOutput).Writer())
-	assert.Same(t, ownedOutput, ClosingOutput(ownedOutput).Closer())
+	ownedWriter := &writeCloseSpy{Writer: &writeCloseSpy{Writer: io.Discard}}
+	ownedOutput := ClosingOutput(ownedWriter)
+	assert.Same(t, ownedWriter, ownedOutput.Writer())
+	assert.NoError(t, ownedOutput.Close())
+	assert.True(t, ownedWriter.closed.Load())
 }
 
 // TestCommandStageHonorsCloseStdin verifies that a command stage closes a

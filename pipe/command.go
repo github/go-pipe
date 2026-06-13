@@ -91,9 +91,7 @@ func (s *commandStage) Start(
 	ins InputStream, outs OutputStream,
 ) error {
 	stdin := ins.Reader()
-	stdinCloser := ins.Closer()
 	stdout := outs.Writer()
-	stdoutCloser := outs.Closer()
 
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = opts.Dir
@@ -109,14 +107,12 @@ func (s *commandStage) Start(
 		s.cmd.Stdin = stdin
 	}
 
-	if stdinCloser != nil {
-		if _, ok := stdin.(*os.File); ok {
-			// We can close our copy as soon as the command has started
-			earlyClosers = append(earlyClosers, stdinCloser)
-		} else {
-			// We need to close `stdin`, but only after the command has finished
-			s.lateClosers = append(s.lateClosers, stdinCloser)
-		}
+	if _, ok := stdin.(*os.File); ok {
+		// We can close our copy as soon as the command has started
+		earlyClosers = append(earlyClosers, ins)
+	} else {
+		// We need to close `stdin`, but only after the command has finished
+		s.lateClosers = append(s.lateClosers, ins)
 	}
 
 	closeEarlyClosers := func() {
@@ -136,13 +132,9 @@ func (s *commandStage) Start(
 	if stdout != nil {
 		if f, ok := stdout.(*os.File); ok {
 			s.cmd.Stdout = f
-			if stdoutCloser != nil {
-				earlyClosers = append(earlyClosers, stdoutCloser)
-			}
+			earlyClosers = append(earlyClosers, outs)
 		} else {
-			if stdoutCloser != nil {
-				s.lateClosers = append(s.lateClosers, stdoutCloser)
-			}
+			s.lateClosers = append(s.lateClosers, outs)
 			// Route the copy through our own pipe so we can use a
 			// pooled buffer rather than letting exec.Cmd allocate a
 			// fresh 32KB buffer for its internal io.Copy.
@@ -153,8 +145,8 @@ func (s *commandStage) Start(
 			}
 			earlyClosers = append(earlyClosers, ec)
 		}
-	} else if stdoutCloser != nil {
-		s.lateClosers = append(s.lateClosers, stdoutCloser)
+	} else {
+		s.lateClosers = append(s.lateClosers, outs)
 	}
 
 	// If the caller hasn't arranged otherwise, read the command's

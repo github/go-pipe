@@ -21,11 +21,6 @@ func (s InputStream) Reader() io.Reader {
 	return s.reader
 }
 
-// Closer returns the stream closer, or nil if the stream is non-closing.
-func (s InputStream) Closer() io.Closer {
-	return s.closer
-}
-
 func (s InputStream) Close() error {
 	if s.closer == nil {
 		return nil
@@ -50,11 +45,6 @@ func ClosingOutput(w io.WriteCloser) OutputStream {
 
 func (s OutputStream) Writer() io.Writer {
 	return s.writer
-}
-
-// Closer returns the stream closer, or nil if the stream is non-closing.
-func (s OutputStream) Closer() io.Closer {
-	return s.closer
 }
 
 func (s OutputStream) Close() error {
