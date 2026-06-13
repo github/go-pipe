@@ -44,9 +44,9 @@ import (
 // external command will keep its own copy open as long as necessary
 // (and no longer!). It should use roughly the following sequence:
 //
-//	cmd.Stdin = f // Similarly for stdout
+//	cmd.Stdin = stdin.Reader() // Similarly for stdout
 //	cmd.Start(…)
-//	f.Close() // close our copy
+//	stdin.Close() // Close our copy
 //	cmd.Wait()
 //
 // If the stage is an external command and its stdin is not an
@@ -56,10 +56,10 @@ import (
 // provided stdin itself, but only _after_ the external command has
 // finished, like so:
 //
-//	cmd.Stdin = r
+//	cmd.Stdin = stdin.Reader() // Similarly for stdout
 //	cmd.Start(…)
 //	cmd.Wait()
-//	r.Close()
+//	stdin.Close() // Close
 //
 // If the stage is an external command and its stdout is not an
 // `*os.File`, the stage creates a pipe, passes the write end to the
