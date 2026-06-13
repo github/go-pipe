@@ -107,9 +107,9 @@ func (s *pipeSniffingStage) Start(
 	stdin pipe.InputStream, stdout pipe.OutputStream,
 ) error {
 	s.stdin = stdin.Reader()
-	stdin.Close()
+	_ = stdin.Close()
 	s.stdout = stdout.Writer()
-	stdout.Close()
+	_ = stdout.Close()
 	return nil
 }
 

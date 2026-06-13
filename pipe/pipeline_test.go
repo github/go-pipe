@@ -675,8 +675,8 @@ func (s ErrorStartingStage) Start(
 	_ context.Context, _ pipe.StageOptions,
 	stdin pipe.InputStream, stdout pipe.OutputStream,
 ) error {
-	stdin.Close()
-	stdout.Close()
+	_ = stdin.Close()
+	_ = stdout.Close()
 	return s.err
 }
 
@@ -705,8 +705,8 @@ func (s requirementStage) Start(
 	if s.started != nil {
 		*s.started = true
 	}
-	stdin.Close()
-	stdout.Close()
+	_ = stdin.Close()
+	_ = stdout.Close()
 	return nil
 }
 

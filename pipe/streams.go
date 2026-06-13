@@ -26,10 +26,11 @@ func (s InputStream) Closer() io.Closer {
 	return s.closer
 }
 
-func (s InputStream) Close() {
-	if s.closer != nil {
-		_ = s.closer.Close()
+func (s InputStream) Close() error {
+	if s.closer == nil {
+		return nil
 	}
+	return s.closer.Close()
 }
 
 type OutputStream struct {
@@ -56,8 +57,9 @@ func (s OutputStream) Closer() io.Closer {
 	return s.closer
 }
 
-func (s OutputStream) Close() {
-	if s.closer != nil {
-		_ = s.closer.Close()
+func (s OutputStream) Close() error {
+	if s.closer == nil {
+		return nil
 	}
+	return s.closer.Close()
 }

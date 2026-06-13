@@ -355,7 +355,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// the previous stage was writing to. That should cause it to exit
 		// even if it's not minding its context.
 		if closeFailedStageStdin {
-			stageStarters[i].stdin.Close()
+			_ = stageStarters[i].stdin.Close()
 		}
 
 		// If stdout was supplied with WithStdoutCloser but the final stage
@@ -407,7 +407,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			ctx, p.stageOptions(),
 			ss.stdin, ss.stdout,
 		); err != nil {
-			nextSS.stdin.Close()
+			_ = nextSS.stdin.Close()
 			return abort(i, err, false)
 		}
 	}
