@@ -14,6 +14,14 @@ import (
 //
 // A nil `*InputStream` is a valid value. Its `Reader()` method
 // returns `nil` and `Close()` does nothing successfully.
+//
+// It might seem like `InputStream` should implement `io.Reader`
+// itself. But we want to avoid hiding the dynamic type of the
+// `io.Reader` that is being used as the stdin of a pipeline. That
+// object might be of a type that is subject to optimizations that
+// aren't available for a generic `io.Reader`. For example, it might
+// be an `*os.File` (which can be passed directly to subcommands or to
+// `splice(2)`), or it might implement `io.WriterTo`.
 type InputStream struct {
 	reader io.Reader
 
@@ -74,6 +82,14 @@ func (s *InputStream) Close() error {
 //
 // A nil `*OutputStream` is a valid value. Its `Writer()` method
 // returns `nil` and `Close()` does nothing successfully.
+//
+// It might seem like `OutputStream` should implement `io.Writer`
+// itself. But we want to avoid hiding the dynamic type of the
+// `io.Writer` that is being used as the stdout of a pipeline. That
+// object might be of a type that is subject to optimizations that
+// aren't available for a generic `io.Writer`. For example, it might
+// be an `*os.File` (which can be passed directly to subcommands or to
+// `splice(2)`), or it might implement `io.ReaderFrom`.
 type OutputStream struct {
 	writer io.Writer
 
