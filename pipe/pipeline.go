@@ -224,15 +224,6 @@ type stageStarter struct {
 	stdout       *OutputStream
 }
 
-func (requirement StreamRequirement) validate() error {
-	switch requirement {
-	case StreamOptional, StreamForbidden:
-		return nil
-	default:
-		return fmt.Errorf("invalid stream requirement %d", requirement)
-	}
-}
-
 func (requirements StageRequirements) validate(s Stage, stdinConnected, stdoutConnected bool) error {
 	if err := requirements.Stdin.validate(); err != nil {
 		return fmt.Errorf("stdin: %w", err)

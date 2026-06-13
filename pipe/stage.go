@@ -155,16 +155,6 @@ type StageOptions struct {
 // StagePanicHandler is a function that handles panics in a pipeline's stages.
 type StagePanicHandler func(p any) error
 
-type StreamRequirement int
-
-const (
-	// StreamOptional means the stream may be connected or nil.
-	StreamOptional StreamRequirement = iota
-
-	// StreamForbidden means the stream must be nil.
-	StreamForbidden
-)
-
 // StageRequirements describes what a Stage needs from the streams connected to
 // its stdin and stdout. The zero value is correct for stages that are happy
 // with arbitrary io.Reader/io.Writer streams, such as Function stages.
