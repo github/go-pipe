@@ -37,7 +37,7 @@ func (s *stageWithExtraEnv) Requirements() StageRequirements {
 
 func (s *stageWithExtraEnv) Start(
 	ctx context.Context, opts StageOptions,
-	stdin InputStream, stdout OutputStream,
+	stdin *InputStream, stdout *OutputStream,
 ) error {
 	opts.Vars = append(opts.Vars[:len(opts.Vars):len(opts.Vars)], func(_ context.Context, vars []EnvVar) []EnvVar {
 		return append(vars, s.env...)

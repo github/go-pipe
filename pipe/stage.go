@@ -113,7 +113,7 @@ type Stage interface {
 	// an error, `Wait()` must not be called.
 	Start(
 		ctx context.Context, opts StageOptions,
-		stdin InputStream, stdout OutputStream,
+		stdin *InputStream, stdout *OutputStream,
 	) error
 
 	// Wait waits for the stage to be done, either because it has

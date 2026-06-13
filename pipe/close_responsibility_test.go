@@ -149,14 +149,14 @@ func TestCommandStageHonorsCloseStdout(t *testing.T) {
 	}
 }
 
-func inputForTest(r io.ReadCloser, closing bool) InputStream {
+func inputForTest(r io.ReadCloser, closing bool) *InputStream {
 	if closing {
 		return ClosingInput(r)
 	}
 	return Input(r)
 }
 
-func outputForTest(w io.WriteCloser, closing bool) OutputStream {
+func outputForTest(w io.WriteCloser, closing bool) *OutputStream {
 	if closing {
 		return ClosingOutput(w)
 	}

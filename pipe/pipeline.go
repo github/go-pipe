@@ -225,8 +225,8 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 
 type stageStarter struct {
 	requirements StageRequirements
-	stdin        InputStream
-	stdout       OutputStream
+	stdin        *InputStream
+	stdout       *OutputStream
 }
 
 func (requirement StreamRequirement) validate() error {
@@ -339,9 +339,9 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	}
 
 	if p.stdout != nil {
-		i := len(p.stages) - 1
-		ss := &stageStarters[i]
-		ss.stdout = OutputStream{
+		// Arrange for the output of the last stage to go to
+		// `p.stdout`:
+		stageStarters[len(p.stages)-1].stdout = &OutputStream{
 			writer: p.stdout,
 			closer: p.stdoutCloser,
 		}

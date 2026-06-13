@@ -87,7 +87,7 @@ func (s *goStage) Requirements() StageRequirements {
 
 func (s *goStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin InputStream, stdout OutputStream,
+	stdin *InputStream, stdout *OutputStream,
 ) error {
 	r := stdin.Reader()
 	if r == nil {

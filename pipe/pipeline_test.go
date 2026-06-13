@@ -673,7 +673,7 @@ func (s ErrorStartingStage) Requirements() pipe.StageRequirements {
 
 func (s ErrorStartingStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	stdin pipe.InputStream, stdout pipe.OutputStream,
+	stdin *pipe.InputStream, stdout *pipe.OutputStream,
 ) error {
 	_ = stdin.Close()
 	_ = stdout.Close()
@@ -700,7 +700,7 @@ func (s requirementStage) Requirements() pipe.StageRequirements {
 
 func (s requirementStage) Start(
 	_ context.Context, _ pipe.StageOptions,
-	stdin pipe.InputStream, stdout pipe.OutputStream,
+	stdin *pipe.InputStream, stdout *pipe.OutputStream,
 ) error {
 	if s.started != nil {
 		*s.started = true

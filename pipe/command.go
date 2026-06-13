@@ -88,7 +88,7 @@ func (s *commandStage) Requirements() StageRequirements {
 
 func (s *commandStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin InputStream, stdout OutputStream,
+	stdin *InputStream, stdout *OutputStream,
 ) error {
 	r := stdin.Reader()
 	w := stdout.Writer()
