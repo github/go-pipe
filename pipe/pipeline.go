@@ -64,11 +64,11 @@ type Pipeline struct {
 	// does not guarantee that clients are using the class correctly.
 	started uint32
 
-	eventHandler func(e *Event)
+	eventHandler func(e *EventError)
 	panicHandler StagePanicHandler
 }
 
-var emptyEventHandler = func(_ *Event) {}
+var emptyEventHandler = func(_ *EventError) {}
 
 type NewPipeFn func(opts ...Option) *Pipeline
 
@@ -165,7 +165,7 @@ func WithEnvVarsFunc(valuesFunc ContextValuesFunc) Option {
 
 // WithEventHandler sets a handler for the pipeline. Setting one will emit
 // and event for each process.
-func WithEventHandler(handler func(e *Event)) Option {
+func WithEventHandler(handler func(e *EventError)) Option {
 	return func(p *Pipeline) {
 		p.eventHandler = handler
 	}
@@ -327,7 +327,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		for _, s := range p.stages[:i] {
 			_ = s.Wait()
 		}
-		p.eventHandler(&Event{
+		p.eventHandler(&EventError{
 			Command: p.stages[i].Name(),
 			Msg:     "failed to start pipeline stage",
 			Err:     err,
@@ -443,7 +443,7 @@ func (p *Pipeline) Wait() error {
 	}
 
 	if earliestStageErr != nil {
-		p.eventHandler(&Event{
+		p.eventHandler(&EventError{
 			Command: earliestFailedStage.Name(),
 			Msg:     "command failed",
 			Err:     earliestStageErr,
