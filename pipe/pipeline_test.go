@@ -377,7 +377,7 @@ func TestPipelineExit(t *testing.T) {
 		pipe.Command("false"),
 		pipe.Command("true"),
 	)
-	assert.EqualError(t, p.Run(ctx), "false: exit status 1")
+	assert.EqualError(t, p.Run(ctx), `command failed in stage "false": exit status 1`)
 }
 
 func TestPipelineStderr(t *testing.T) {
@@ -393,7 +393,7 @@ func TestPipelineStderr(t *testing.T) {
 
 	_, err = p.Output(ctx)
 	if assert.Error(t, err) {
-		assert.Contains(t, err.Error(), "ls: exit status")
+		assert.Contains(t, err.Error(), `command failed in stage "ls": exit status`)
 	}
 }
 
@@ -450,7 +450,7 @@ func TestLittleEPIPE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := p.Run(ctx)
-	assert.EqualError(t, err, "sh: signal: broken pipe")
+	assert.EqualError(t, err, `command failed in stage "sh": signal: broken pipe`)
 }
 
 // Verify the correct error if one command in the pipeline exits
@@ -469,7 +469,7 @@ func TestBigEPIPE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := p.Run(ctx)
-	assert.EqualError(t, err, "seq: signal: broken pipe")
+	assert.EqualError(t, err, `command failed in stage "seq": signal: broken pipe`)
 }
 
 // Verify the correct error if one command in the pipeline exits

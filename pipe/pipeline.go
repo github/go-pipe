@@ -327,14 +327,13 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		for _, s := range p.stages[:i] {
 			_ = s.Wait()
 		}
-		p.eventHandler(&EventError{
+		eventErr := &EventError{
 			Command: p.stages[i].Name(),
 			Msg:     "failed to start pipeline stage",
 			Err:     err,
-		})
-		return fmt.Errorf(
-			"starting pipeline stage %q: %w", p.stages[i].Name(), err,
-		)
+		}
+		p.eventHandler(eventErr)
+		return eventErr
 	}
 
 	// Loop over all of the stages, starting them in order.
@@ -443,12 +442,13 @@ func (p *Pipeline) Wait() error {
 	}
 
 	if earliestStageErr != nil {
-		p.eventHandler(&EventError{
+		eventErr := &EventError{
 			Command: earliestFailedStage.Name(),
 			Msg:     "command failed",
 			Err:     earliestStageErr,
-		})
-		return fmt.Errorf("%s: %w", earliestFailedStage.Name(), earliestStageErr)
+		}
+		p.eventHandler(eventErr)
+		return eventErr
 	}
 
 	return nil
