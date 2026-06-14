@@ -64,7 +64,7 @@ type Pipeline struct {
 	// does not guarantee that clients are using the class correctly.
 	started uint32
 
-	eventHandler func(e *EventError)
+	eventHandler EventHandler
 	panicHandler StagePanicHandler
 }
 
@@ -165,7 +165,7 @@ func WithEnvVarsFunc(valuesFunc ContextValuesFunc) Option {
 
 // WithEventHandler sets a handler for the pipeline. Setting one will emit
 // and event for each process.
-func WithEventHandler(handler func(e *EventError)) Option {
+func WithEventHandler(handler EventHandler) Option {
 	return func(p *Pipeline) {
 		p.eventHandler = handler
 	}

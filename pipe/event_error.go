@@ -11,6 +11,8 @@ type EventError struct {
 	Context map[string]interface{}
 }
 
+type EventHandler func(err *EventError)
+
 func (err *EventError) Error() string {
 	if err.Msg == "" {
 		return fmt.Sprintf("%s: %v", err.Command, err.Err)
