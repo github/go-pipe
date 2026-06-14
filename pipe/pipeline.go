@@ -15,8 +15,6 @@ type Pipeline struct {
 	wait WaitFunc
 }
 
-type NewPipeFn func(opts ...Option) *Pipeline
-
 // NewPipeline returns a Pipeline struct with all of the `options`
 // applied. Since `Pipeline` doesn't allow external access to its
 // `Runner`, it permits any `StartOption`s as options (not only
