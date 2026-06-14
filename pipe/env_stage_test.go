@@ -112,8 +112,8 @@ func TestWithExtraEnvDoesNotShareVarsBackingArray(t *testing.T) {
 		})
 	}
 
-	p := New(func(p *Pipeline) {
-		p.env.Vars = baseVars
+	p := New(func(r *runner) {
+		r.env.Vars = baseVars
 	})
 	p.Add(
 		WithExtraEnv(
