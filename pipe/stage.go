@@ -7,33 +7,58 @@ import (
 // Stage is an element of a `Pipeline`. It reads from standard input
 // and writes to standard output.
 //
-// Who closes stdin and stdout?
+// # Who closes stdin and stdout?
 //
 // A `Stage` as a whole is responsible for closing its end of stdin
 // and stdout if the corresponding stream is closing. That
-// responsibility transfers to the stage as soon as `Start()` is called
-// and applies even if `Start()` returns an error. Before returning an
-// error from `Start()`, the stage must close any closing stream that
-// it has not already handed off to something else that will close it
-// promptly. The caller must not close a closing stream after passing it
-// to `Start()`.
+// responsibility transfers to the stage as soon as the stage's
+// `Start()` method is called and applies even if `Start()` returns an
+// error. Before returning an error from `Start()`, the stage must
+// close any closing stream that it has not already handed off to
+// something else that will close it promptly. The caller must not
+// close a closing stream after passing it to `Start()`.
 //
-// If the caller wants to retain ownership of stdin/stdout, it passes a
-// non-closing stream. The stage must not close a non-closing stream,
-// even if `Start()` returns an error.
+// If the caller wants to retain ownership of stdin/stdout, it passes
+// a non-closing stream. Calling `Close()` on a non-closing stream is
+// a NOP, so it isn't harmful but isn't required.
 //
-// Closing stdin/stdout tells the previous/next stage that this stage is
-// done reading/writing data, which can affect their behavior. Therefore,
-// after a successful start, a stage should close each one as soon as it
-// is done with it.
+// Closing stdin/stdout tells the previous/next stage that this stage
+// is done reading/writing data, which can affect their behavior.
+// Therefore, after a successful start, a stage should close each one
+// as soon as it is done with it. Assume that this is done via the
+// following local function
 //
-// How this should be done depends on whether stdin/stdout are of type
-// `*os.File`.
+//	closeStreams := func() {
+//		// Error handling omitted.
+//		_ = stdin.Close()
+//		_ = stdout.Close()
+//	}
+//
+// From the point of view of the pipeline as a whole, if stdin is
+// provided by the user (`WithStdin()`), then we don't want the first
+// stage to close it at all, whether it's an `*os.File` or not. The
+// pipeline communicates this by passing a non-closing `InputStream`
+// when it starts that stage. For stdout, it depends on whether the
+// user supplied it using `WithStdout()` or `WithStdoutCloser()`. In
+// any case, this function can close the streams anyway, because
+// `InputStream.Close()` and `OutputStream.Close()` do nothing in
+// those cases.
+//
+// When these closes should happen depends on what kind of stage it is
+// and whether stdin/stdout are of type `*os.File`.
+//
+// ## A command stage
 //
 // If a stage is an external command, then the subprocess ultimately
 // needs its own copies of `*os.File` file descriptors for its stdin
 // and stdout. The external command will "always" [1] close those when
 // it exits.
+//
+// (It's theoretically possible for a command to pass the open file
+// descriptor to another, longer-lived process, in which case the file
+// descriptor wouldn't necessarily get closed when the command
+// finishes. But that's ill-behaved in a command that is being used in
+// a pipeline, so we'll ignore that possibility.)
 //
 // If the stage is an external command and one of the arguments is an
 // `*os.File`, then it can set the corresponding field of `exec.Cmd`
@@ -42,54 +67,45 @@ import (
 // subprocess. Therefore, the stage must close its copy of that
 // argument as soon as the external command has started, because the
 // external command will keep its own copy open as long as necessary
-// (and no longer!). It should use roughly the following sequence:
+// (and no longer!). Therefore, it should use roughly the following
+// sequence:
 //
-//	cmd.Stdin = stdin.Reader() // Similarly for stdout
-//	cmd.Start(…)
-//	stdin.Close() // Close our copy
-//	cmd.Wait()
+//	cmd.Stdin = stdin.Reader()
+//	cmd.Stdout = stdout.Writer()
+//	err := cmd.Start(…)
+//	// Close our copies as soon as the command has started:
+//	closeStreams()
+//	if err != nil {
+//		return err
+//	}
+//	return cmd.Wait()
 //
 // If the stage is an external command and its stdin is not an
 // `*os.File`, then `exec.Cmd` will take care of creating an
 // `os.Pipe()`, copying from the provided reader into the pipe, and
 // eventually closing both ends of the pipe. The stage must close the
-// provided stdin itself, but only _after_ the external command has
-// finished, like so:
+// provided stdin itself, but only _after_ the external command and
+// the copy have finished, like so:
 //
-//	cmd.Stdin = stdin.Reader() // Similarly for stdout
-//	cmd.Start(…)
-//	cmd.Wait()
-//	stdin.Close() // Close
+//	defer closeStreams()
+//	cmd.Stdin = stdin.Reader()
+//	cmd.Stdout = stdout.Writer()
+//	err := cmd.Start(…)
+//	if err != nil {
+//		return err
+//	}
+//	return cmd.Wait()
 //
-// If the stage is an external command and its stdout is not an
-// `*os.File`, the stage creates a pipe, passes the write end to the
-// command, and copies from the read end to the provided writer. The
-// stage must close the provided stdout itself, but only _after_ the
-// external command and the copy have finished.
+// ## A function stage
 //
 // If the stage is a Go function, then it holds the only copy of
 // stdin/stdout, so it must wait until the function is done before
 // closing them (regardless of their underlying type, like so:
 //
 //	go func() {
-//		f(…, stdin, stdout)
-//		stdin.Close()
-//		stdout.Close()
+//		defer closeStreams()
+//		f(…, stdin.Reader(), stdout.Writer())
 //	}()
-//
-// From the point of view of the pipeline as a whole, if stdin is
-// provided by the user (`WithStdin()`), then we don't want the first
-// stage to close it at all, whether it's an `*os.File` or not. The
-// pipeline communicates this by passing a non-closing `InputStream`
-// when it starts that stage. For stdout, it depends on whether the
-// user supplied it using `WithStdout()` or `WithStdoutCloser()`.
-//
-// [1] It's theoretically possible for a command to pass the open file
-//     descriptor to another, longer-lived process, in which case the
-//     file descriptor wouldn't necessarily get closed when the
-//     command finishes. But that's ill-behaved in a command that is
-//     being used in a pipeline, so we'll ignore that possibility.
-
 type Stage interface {
 	// Name returns the name of the stage.
 	Name() string
