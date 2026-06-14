@@ -163,14 +163,6 @@ func WithEnvVarsFunc(valuesFunc ContextValuesFunc) Option {
 	}
 }
 
-// Event represents anything that could happen during the pipeline execution
-type Event struct {
-	Command string
-	Msg     string
-	Err     error
-	Context map[string]interface{}
-}
-
 // WithEventHandler sets a handler for the pipeline. Setting one will emit
 // and event for each process.
 func WithEventHandler(handler func(e *Event)) Option {
