@@ -148,11 +148,15 @@ func (p *Pipe) Start(
 		requirements := s.Requirements()
 		if err := requirements.Stdin.Validate(); err != nil {
 			closePipes()
-			return fmt.Errorf("stdin: %w", err)
+			return fmt.Errorf(
+				"stage %q has invalid stdin requirement: %w", s.Name(), err,
+			)
 		}
 		if err := requirements.Stdout.Validate(); err != nil {
 			closePipes()
-			return fmt.Errorf("stdout: %w", err)
+			return fmt.Errorf(
+				"stage %q has invalid stdout requirement: %w", s.Name(), err,
+			)
 		}
 
 		stageJoiners[i].nextStage = s
