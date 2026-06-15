@@ -286,9 +286,6 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// Store the stages in the joiners, and verify that the stages'
 	// requirements are well-formed:
 	for i, s := range p.stages {
-		stageJoiners[i].nextStage = s
-		stageJoiners[i+1].prevStage = s
-
 		// Make sure that the stage's requirements are well-formed:
 		requirements := s.Requirements()
 		if err := requirements.Stdin.Validate(); err != nil {
@@ -297,6 +294,11 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		if err := requirements.Stdout.Validate(); err != nil {
 			return fmt.Errorf("stdout: %w", err)
 		}
+
+		stageJoiners[i].nextStage = s
+		stageJoiners[i].nextStageReq = requirements
+		stageJoiners[i+1].prevStage = s
+		stageJoiners[i+1].prevStageReq = requirements
 	}
 
 	// Create the "inner" pipes (i.e, all but the first and last
