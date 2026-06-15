@@ -54,6 +54,23 @@ func TestPipelineEmptyOutput(t *testing.T) {
 	}
 }
 
+func TestPipelineOutputClosesConfiguredStdoutCloser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout := &closeTrackingWriter{}
+	p := pipe.New(
+		pipe.WithStdin(strings.NewReader("hello world\n")),
+		pipe.WithStdoutCloser(stdout),
+	)
+
+	out, err := p.Output(ctx)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "hello world\n", string(out))
+		assert.Equal(t, "", stdout.buf.String())
+		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
+	}
+}
+
 func TestPipelineEmptyWithStdoutCloser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

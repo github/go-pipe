@@ -377,6 +377,14 @@ func (p *Pipeline) Start(ctx context.Context) error {
 }
 
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
+	if p.hasStarted() {
+		panic("attempt to get output from a pipeline that has already started")
+	}
+
+	if err := p.stdout.Close(); err != nil {
+		return nil, fmt.Errorf("closing previous stdout: %w", err)
+	}
+
 	var buf bytes.Buffer
 	p.stdout = Output(&buf)
 	err := p.Run(ctx)
