@@ -10,7 +10,7 @@ It's normal for pipelines to stop before all input has been consumed[^1]. If an 
 
 In go-pipe v1 it was possible to get away without handling this case, because a command stage's stdin was connected in a way that often (but not necessarily!) drained the write side and hid the error from the previous stage feeding it. That was an implementation detail, not a guarantee. In go-pipe v2, producer stages are more likely to be connected directly to a command's stdin, and thus see the error themselves.
 
-Fortunately, this is easily handled by wrapping the stage with `pipe.IgnoreError(stage, IsPipeError)`. If the producer only writes output and is otherwise stateless, that's the only thing needed.
+Fortunately, this is easily handled by wrapping the stage with `pipe.IgnoreError(stage, pipe.IsPipeError)`. If the producer only writes output and is otherwise stateless, that's the only thing needed.
 
 If the producer also updates state, metrics, cursors, or has other side effects, in a way that depends on how much of the output was produced, then in addition to using `pipe.IgnoreError`, you must also ensure producer-owned state is brought to a consistent point before returning the error.
 
