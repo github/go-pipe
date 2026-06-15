@@ -951,6 +951,24 @@ func TestFunctionOptionsForbidStreams(t *testing.T) {
 	})
 }
 
+func TestFunctionOptionsSetStreamRequirements(t *testing.T) {
+	t.Parallel()
+
+	stage := pipe.Function(
+		"file-preferring",
+		func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
+			return nil
+		},
+		pipe.WithStdinRequirement(pipe.StreamPreferFile),
+		pipe.WithStdoutRequirement(pipe.StreamPreferFile),
+	)
+
+	assert.Equal(t, pipe.StageRequirements{
+		Stdin:  pipe.StreamPreferFile,
+		Stdout: pipe.StreamPreferFile,
+	}, stage.Requirements())
+}
+
 func TestStreamForbiddenStdin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
