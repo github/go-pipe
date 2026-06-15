@@ -18,15 +18,15 @@ import (
 // subprocess can detect when that fd is closed.
 func TestCommandStageStdoutFastPath(t *testing.T) {
 	cases := []struct {
-		name        string
-		closeStdout bool
+		name          string
+		closingStdout bool
 	}{
 		{
-			name:        "raw *os.File with closeStdout",
-			closeStdout: true,
+			name:          "raw *os.File with closing stdout",
+			closingStdout: true,
 		},
 		{
-			name: "raw *os.File without closeStdout",
+			name: "raw *os.File with non-closing stdout",
 		},
 	}
 	for _, tc := range cases {
@@ -42,7 +42,14 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			require.NoError(t, s.Start(ctx, StageOptions{}, nil, false, f, tc.closeStdout))
+			var stdout *OutputStream
+			if tc.closingStdout {
+				stdout = ClosingOutput(f)
+			} else {
+				stdout = Output(f)
+			}
+
+			require.NoError(t, s.Start(ctx, StageOptions{}, Input(nil), stdout))
 			t.Cleanup(func() { _ = s.Wait() })
 
 			gotFile, ok := s.cmd.Stdout.(*os.File)

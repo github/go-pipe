@@ -17,6 +17,15 @@ import (
 // Neither `stdin` nor `stdout` are necessarily buffered. If the
 // `StageFunc` requires buffering, it needs to arrange that itself.
 //
+// A later stage can stop reading before this function has written all
+// of its output. In that case, writes to `stdout` can fail with an
+// error matched by `IsPipeError`. If the function only writes output
+// and is otherwise stateless, callers can usually wrap the stage with
+// `IgnoreError(stage, IsPipeError)`. If the function also updates
+// producer-owned state, metrics, cursors, or other side effects that
+// depend on how much output was produced, it should bring those side
+// effects to a consistent point before returning the write error.
+//
 // A `StageFunc` is run in a separate goroutine, so it must be careful
 // to synchronize any data access aside from reading and writing.
 type StageFunc func(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) error
@@ -78,19 +87,15 @@ func (s *goStage) Requirements() StageRequirements {
 
 func (s *goStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, closeStdin bool,
-	stdout io.Writer, closeStdout bool,
+	stdin *InputStream, stdout *OutputStream,
 ) error {
-	stdinCloser := ownedCloser(stdin, closeStdin)
-	stdoutCloser := ownedCloser(stdout, closeStdout)
-
-	r := stdin
+	r := stdin.Reader()
 	if r == nil {
 		// treat nil as empty input.
 		r = strings.NewReader("")
 	}
 
-	w := stdout
+	w := stdout.Writer()
 	if w == nil {
 		// treat nil output as /dev/null
 		w = io.Discard
@@ -103,15 +108,11 @@ func (s *goStage) Start(
 					s.err = opts.PanicHandler(p)
 				}
 			}
-			if stdoutCloser != nil {
-				if err := stdoutCloser.Close(); err != nil && s.err == nil {
-					s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
-				}
+			if err := stdout.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdout for stage %q: %w", s.Name(), err)
 			}
-			if stdinCloser != nil {
-				if err := stdinCloser.Close(); err != nil && s.err == nil {
-					s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
-				}
+			if err := stdin.Close(); err != nil && s.err == nil {
+				s.err = fmt.Errorf("error closing stdin for stage %q: %w", s.Name(), err)
 			}
 			close(s.done)
 		}()

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync/atomic"
 )
 
@@ -55,12 +54,10 @@ type ContextValuesFunc func(context.Context) []EnvVar
 type Pipeline struct {
 	env Env
 
-	stdin        io.Reader
-	stdinCloser  io.Closer
-	stdout       io.Writer
-	stdoutCloser io.Closer
-	stages       []Stage
-	cancel       func()
+	stdin  *InputStream
+	stdout *OutputStream
+	stages []Stage
+	cancel func()
 
 	// Atomically written and read value, nonzero if the pipeline has
 	// been started. This is only used for lifecycle sanity checks but
@@ -99,28 +96,31 @@ func WithDir(dir string) Option {
 	}
 }
 
-// WithStdin assigns stdin to the first command in the pipeline.
+// WithStdin assigns stdin to the first command in the pipeline. The
+// caller retains ownership of stdin; the pipeline will not close it,
+// even if `Start()` returns an error.
 func WithStdin(stdin io.Reader) Option {
 	return func(p *Pipeline) {
-		p.stdin = stdin
-		p.stdinCloser = nil
+		p.stdin = Input(stdin)
 	}
 }
 
-// WithStdout assigns stdout to the last command in the pipeline.
+// WithStdout assigns stdout to the last command in the pipeline. The
+// caller retains ownership of stdout; the pipeline will not close it,
+// even if `Start()` returns an error.
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
-		p.stdout = stdout
-		p.stdoutCloser = nil
+		p.stdout = Output(stdout)
 	}
 }
 
 // WithStdoutCloser assigns stdout to the last command in the
-// pipeline, and closes stdout when it's done.
+// pipeline, and closes stdout when the pipeline is done with it. The
+// pipeline is responsible for closing stdout even if `Start()` returns
+// an error.
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return func(p *Pipeline) {
-		p.stdout = stdout
-		p.stdoutCloser = stdout
+		p.stdout = ClosingOutput(stdout)
 	}
 }
 
@@ -217,54 +217,6 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 	}
 }
 
-type stageStarter struct {
-	requirements StageRequirements
-	stdin        io.Reader
-	stdinCloser  io.Closer
-	stdout       io.Writer
-	stdoutCloser io.Closer
-}
-
-func (requirement StreamRequirement) validate() error {
-	switch requirement {
-	case StreamOptional, StreamForbidden:
-		return nil
-	default:
-		return fmt.Errorf("invalid stream requirement %d", requirement)
-	}
-}
-
-func (requirements StageRequirements) validate(s Stage, stdinConnected, stdoutConnected bool) error {
-	if err := requirements.Stdin.validate(); err != nil {
-		return fmt.Errorf("stdin: %w", err)
-	}
-	if err := requirements.Stdout.validate(); err != nil {
-		return fmt.Errorf("stdout: %w", err)
-	}
-	if requirements.Stdin == StreamForbidden && stdinConnected {
-		return fmt.Errorf("stage %q forbids stdin, but stdin is connected", s.Name())
-	}
-	if requirements.Stdout == StreamForbidden && stdoutConnected {
-		return fmt.Errorf("stage %q forbids stdout, but stdout is connected", s.Name())
-	}
-	return nil
-}
-
-func (p *Pipeline) abortBeforeStart(s Stage, err error) error {
-	if p.stdoutCloser != nil {
-		_ = p.stdoutCloser.Close()
-	}
-	p.cancel()
-	p.eventHandler(&Event{
-		Command: s.Name(),
-		Msg:     "failed to start pipeline stage",
-		Err:     err,
-	})
-	return fmt.Errorf(
-		"starting pipeline stage %q: %w", s.Name(), err,
-	)
-}
-
 func (p *Pipeline) stageOptions() StageOptions {
 	return StageOptions{Env: p.env, PanicHandler: p.panicHandler}
 }
@@ -272,6 +224,13 @@ func (p *Pipeline) stageOptions() StageOptions {
 // Start starts the commands in the pipeline. If `Start()` exits
 // without an error, `Wait()` must also be called, to allow all
 // resources to be freed.
+//
+// If `Start()` returns an error, `Wait()` must not be called. Before
+// returning an error, `Start()` cancels and waits for any stages that
+// were started, closes any inter-stage pipes that the pipeline owns,
+// and closes stdout if it was supplied with `WithStdoutCloser()`.
+// Streams supplied with `WithStdin()` or `WithStdout()` remain owned by
+// the caller and are not closed by the pipeline.
 func (p *Pipeline) Start(ctx context.Context) error {
 	if p.hasStarted() {
 		panic("attempt to start a pipeline that has already started")
@@ -305,46 +264,68 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// We need to decide how to start the stages, especially what
 	// pipes to use to connect adjacent stages (`os.Pipe()` vs.
 	// `io.Pipe()`) based on the two stages' requirements.
-	stageStarters := make([]stageStarter, len(p.stages))
+	stageJoiners := make([]stageJoiner, len(p.stages)+1)
 
-	// Collect information about each stage's type and requirements:
+	// Arrange for the input of the 0th stage to come from `p.stdin`:
+	stageJoiners[0].nextStdin = p.stdin
+
+	// Arrange for the output of the last stage to go to `p.stdout`:
+	stageJoiners[len(p.stages)].prevStdout = p.stdout
+
+	// closePipes closes all of the streams that are currently stored
+	// in the joiners. This should be called if startup fails. As we
+	// call `Stage.Start()` and pass that method streams, we clear
+	// them from the corresponding joiners to avoid closing them
+	// twice.
+	closePipes := func() {
+		for _, sj := range stageJoiners {
+			_ = sj.closePipe()
+		}
+	}
+
+	// Store the stages in the joiners, and verify that the stages'
+	// requirements are well-formed:
 	for i, s := range p.stages {
-		stageStarters[i].requirements = s.Requirements()
+		// Make sure that the stage's requirements are well-formed:
+		requirements := s.Requirements()
+		if err := requirements.Stdin.Validate(); err != nil {
+			return fmt.Errorf("stdin: %w", err)
+		}
+		if err := requirements.Stdout.Validate(); err != nil {
+			return fmt.Errorf("stdout: %w", err)
+		}
 
-		err := stageStarters[i].requirements.validate(
-			s,
-			i > 0 || p.stdin != nil,
-			i < len(p.stages)-1 || p.stdout != nil,
-		)
-		if err != nil {
-			return p.abortBeforeStart(s, err)
+		stageJoiners[i].nextStage = s
+		stageJoiners[i].nextStageReq = requirements
+		stageJoiners[i+1].prevStage = s
+		stageJoiners[i+1].prevStageReq = requirements
+	}
+
+	// Check that each of the stages' requirements are satisfiable:
+	for i := range stageJoiners {
+		if err := stageJoiners[i].validate(); err != nil {
+			closePipes()
+			return err
 		}
 	}
 
-	if p.stdin != nil {
-		// Arrange for the input of the 0th stage to come from
-		// `p.stdin`:
-		stageStarters[0].stdin = p.stdin
-		stageStarters[0].stdinCloser = p.stdinCloser
+	// Create the "inner" pipes (i.e, all but the first and last
+	// `stageJoiners`):
+	for i := 1; i < len(stageJoiners)-1; i++ {
+		if err := stageJoiners[i].createPipe(); err != nil {
+			closePipes()
+			return err
+		}
 	}
 
-	if p.stdout != nil {
-		i := len(p.stages) - 1
-		ss := &stageStarters[i]
-		ss.stdout = p.stdout
-		ss.stdoutCloser = p.stdoutCloser
-	}
-
-	// Clean up any processes and pipes that have been created. `i` is
-	// the index of the stage that failed to start (whose output pipe
-	// has already been cleaned up if necessary).
+	// We're about to start up the stages, one by one. If something
+	// goes wrong during that process, this function should be called
+	// to kill any stages that have already been started and to close
+	// any pipes that have not yet been passed to a stage. `i` is the
+	// index of the stage that failed to start. If the stage already
+	// received its streams, it is responsible for closing them.
 	abort := func(i int, err error) error {
-		// Close the pipe that the previous stage was writing to.
-		// That should cause it to exit even if it's not minding
-		// its context.
-		if stageStarters[i].stdinCloser != nil {
-			_ = stageStarters[i].stdinCloser.Close()
-		}
+		closePipes()
 
 		// Kill and wait for any stages that have been started
 		// already to finish:
@@ -362,57 +343,19 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		)
 	}
 
-	// Loop over all but the last stage, starting them. By the time we
-	// get to a stage, its stdin will have already been determined,
-	// but we still need to figure out its stdout and set the stdin
-	// that will be used for the subsequent stage.
-	for i, s := range p.stages[:len(p.stages)-1] {
-		ss := &stageStarters[i]
-		nextSS := &stageStarters[i+1]
+	// Loop over all of the stages, starting them in order.
+	for i, s := range p.stages {
+		prevSJ := &stageJoiners[i]
+		nextSJ := &stageJoiners[i+1]
 
-		// We need to generate a pipe pair for this stage to use
-		// to communicate with its successor:
-		if ss.requirements.StdoutNeedsFile || nextSS.requirements.StdinNeedsFile {
-			// Use an OS-level pipe for the communication:
-			nextStdin, stdout, err := os.Pipe()
-			if err != nil {
-				return abort(i, err)
-			}
-			nextSS.stdin = nextStdin
-			nextSS.stdinCloser = nextStdin
-			ss.stdout = stdout
-			ss.stdoutCloser = stdout
-		} else {
-			nextStdin, stdout := io.Pipe()
-			nextSS.stdin = nextStdin
-			nextSS.stdinCloser = nextStdin
-			ss.stdout = stdout
-			ss.stdoutCloser = stdout
-		}
-		if err := s.Start(
-			ctx, p.stageOptions(),
-			ss.stdin, ss.stdinCloser != nil,
-			ss.stdout, ss.stdoutCloser != nil,
-		); err != nil {
-			nextSS.stdinCloser.Close()
-			ss.stdoutCloser.Close()
-			return abort(i, err)
-		}
-	}
+		err := s.Start(ctx, p.stageOptions(), prevSJ.nextStdin, nextSJ.prevStdout)
 
-	// The last stage needs special handling, because its stdout
-	// doesn't need to flow into another stage (it's already set in
-	// `ss.stdout` if it's needed).
-	{
-		i := len(p.stages) - 1
-		s := p.stages[i]
-		ss := &stageStarters[i]
+		// Even if that stage failed to start, we are no longer
+		// responsible for closing its streams:
+		prevSJ.nextStdin = nil
+		nextSJ.prevStdout = nil
 
-		if err := s.Start(
-			ctx, p.stageOptions(),
-			ss.stdin, ss.stdinCloser != nil,
-			ss.stdout, ss.stdoutCloser != nil,
-		); err != nil {
+		if err != nil {
 			return abort(i, err)
 		}
 	}
@@ -422,8 +365,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
 	var buf bytes.Buffer
-	p.stdout = &buf
-	p.stdoutCloser = nil
+	p.stdout = Output(&buf)
 	err := p.Run(ctx)
 	return buf.Bytes(), err
 }
@@ -518,7 +460,9 @@ func (p *Pipeline) Wait() error {
 	return nil
 }
 
-// Run starts and waits for the commands in the pipeline.
+// Run starts and waits for the commands in the pipeline. If startup
+// fails, it returns the `Start()` error after `Start()` has performed
+// its failure cleanup.
 func (p *Pipeline) Run(ctx context.Context) error {
 	if err := p.Start(ctx); err != nil {
 		return err

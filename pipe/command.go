@@ -81,18 +81,17 @@ func (s *commandStage) Process() *os.Process {
 
 func (s *commandStage) Requirements() StageRequirements {
 	return StageRequirements{
-		StdinNeedsFile:  true,
-		StdoutNeedsFile: true,
+		Stdin:  StreamPreferFile,
+		Stdout: StreamPreferFile,
 	}
 }
 
 func (s *commandStage) Start(
 	ctx context.Context, opts StageOptions,
-	stdin io.Reader, closeStdin bool,
-	stdout io.Writer, closeStdout bool,
+	stdin *InputStream, stdout *OutputStream,
 ) error {
-	stdinCloser := ownedCloser(stdin, closeStdin)
-	stdoutCloser := ownedCloser(stdout, closeStdout)
+	r := stdin.Reader()
+	w := stdout.Writer()
 
 	if s.cmd.Dir == "" {
 		s.cmd.Dir = opts.Dir
@@ -100,45 +99,49 @@ func (s *commandStage) Start(
 
 	s.setupEnv(ctx, opts.Env)
 
+	// It is important that the streams that are used by a command be
+	// closed at the right time. When that is depends on the type of
+	// the stream.
+	//
+	// A subprocess ultimately needs its own copies of `*os.File` file
+	// descriptors for its stdin and stdout. The external command will
+	// "always" close those when it exits.
+	//
+	// (It's theoretically possible for a command to pass the open
+	// file descriptor to another, longer-lived process, in which case
+	// the file descriptor wouldn't necessarily get closed even when
+	// the command finishes. But that's ill-behaved in a command that
+	// is being used in a pipeline, so we'll ignore that possibility.)
+	//
+	// If a stream provided for use as stdin/stdout is an `*os.File`,
+	// then we set the corresponding field of `exec.Cmd` to that
+	// argument. This causes `exec.Cmd` to duplicate that file
+	// descriptor and passes the dup to the subprocess. Therefore, we
+	// want to close our own copy "early", namely as soon as the
+	// external command has started, because the external command will
+	// keep its own copy open as long as necessary (and no longer!).
+	//
+	// If a stdin/stdout stream is _not_ an `*os.File`, then
+	// `exec.Cmd` will take care of creating an `os.Pipe()`, copying
+	// from the provided stream into/out of the pipe, and eventually
+	// close both ends of the pipe. In that case, we must close the
+	// provided stream "late", namely only after the external command
+	// and the copy have finished.
+
 	// Things that have to be closed as soon as the command has started:
 	var earlyClosers []io.Closer
 
 	// See the type comment for `Stage` for the explanation of this closing behavior.
-	if stdin != nil {
-		s.cmd.Stdin = stdin
+	if r != nil {
+		s.cmd.Stdin = r
 	}
 
-	if stdinCloser != nil {
-		if _, ok := stdin.(*os.File); ok {
-			// We can close our copy as soon as the command has started
-			earlyClosers = append(earlyClosers, stdinCloser)
-		} else {
-			// We need to close `stdin`, but only after the command has finished
-			s.lateClosers = append(s.lateClosers, stdinCloser)
-		}
-	}
-
-	if stdout != nil {
-		if f, ok := stdout.(*os.File); ok {
-			s.cmd.Stdout = f
-			if stdoutCloser != nil {
-				earlyClosers = append(earlyClosers, stdoutCloser)
-			}
-		} else {
-			// Route the copy through our own pipe so we can use a
-			// pooled buffer rather than letting exec.Cmd allocate a
-			// fresh 32KB buffer for its internal io.Copy.
-			ec, err := s.setupPooledStdout(stdout)
-			if err != nil {
-				return err
-			}
-			earlyClosers = append(earlyClosers, ec)
-			if stdoutCloser != nil {
-				s.lateClosers = append(s.lateClosers, stdoutCloser)
-			}
-		}
-	} else if stdoutCloser != nil {
-		s.lateClosers = append(s.lateClosers, stdoutCloser)
+	if _, ok := r.(*os.File); ok {
+		// We can close our copy as soon as the command has started
+		earlyClosers = append(earlyClosers, stdin)
+	} else {
+		// We need to close `stdin`, but only after the command has finished
+		s.lateClosers = append(s.lateClosers, stdin)
 	}
 
 	closeEarlyClosers := func() {
@@ -153,6 +156,26 @@ func (s *commandStage) Start(
 		closeEarlyClosers()
 		_ = s.wg.Wait()
 		_ = s.closeLateClosers()
+	}
+
+	if w != nil {
+		if f, ok := w.(*os.File); ok {
+			s.cmd.Stdout = f
+			earlyClosers = append(earlyClosers, stdout)
+		} else {
+			s.lateClosers = append(s.lateClosers, stdout)
+			// Route the copy through our own pipe so we can use a
+			// pooled buffer rather than letting exec.Cmd allocate a
+			// fresh 32KB buffer for its internal io.Copy.
+			ec, err := s.setupPooledStdout(w)
+			if err != nil {
+				cleanupOnStartFailure()
+				return err
+			}
+			earlyClosers = append(earlyClosers, ec)
+		}
+	} else {
+		s.lateClosers = append(s.lateClosers, stdout)
 	}
 
 	// If the caller hasn't arranged otherwise, read the command's
