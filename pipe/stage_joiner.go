@@ -105,24 +105,28 @@ func (sj *stageJoiner) closePipe() error {
 	)
 }
 
-// validate verifies that `sj.prevStdout` and `sj.nextStdin` are
-// suitable for the adjacent stages, in particular that no pipe is
-// created if the stage requirements are `StreamForbidden`.
+// validate verifies that the adjacent stages' stream requirements are
+// satisfiable, in particular that a stage that forbids its stdin or
+// stdout is not connected to anything.
 func (sj *stageJoiner) validate() error {
-	if sj.prevStage != nil {
-		if sj.prevStageReq.Stdout == StreamForbidden && sj.prevStdout != nil {
-			return fmt.Errorf(
-				"stage %q forbids stdout, but stdout is connected", sj.prevStage.Name(),
-			)
-		}
+	// `prevStage`'s stdout is connected if there is a `nextStage` to
+	// consume it (in which case an inner pipe will be created) or if
+	// a stream (`p.stdout`) has already been stored in `prevStdout`.
+	if sj.prevStage != nil && sj.prevStageReq.Stdout == StreamForbidden &&
+		(sj.nextStage != nil || sj.prevStdout != nil) {
+		return fmt.Errorf(
+			"stage %q forbids stdout, but stdout is connected", sj.prevStage.Name(),
+		)
 	}
 
-	if sj.nextStage != nil {
-		if sj.nextStageReq.Stdin == StreamForbidden && sj.nextStdin != nil {
-			return fmt.Errorf(
-				"stage %q forbids stdin, but stdin is connected", sj.nextStage.Name(),
-			)
-		}
+	// `nextStage`'s stdin is connected if there is a `prevStage` to
+	// produce it (in which case an inner pipe will be created) or if
+	// a stream (`p.stdin`) has already been stored in `nextStdin`.
+	if sj.nextStage != nil && sj.nextStageReq.Stdin == StreamForbidden &&
+		(sj.prevStage != nil || sj.nextStdin != nil) {
+		return fmt.Errorf(
+			"stage %q forbids stdin, but stdin is connected", sj.nextStage.Name(),
+		)
 	}
 
 	return nil

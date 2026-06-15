@@ -301,19 +301,18 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		stageJoiners[i+1].prevStageReq = requirements
 	}
 
-	// Create the "inner" pipes (i.e, all but the first and last
-	// `stageJoiners`):
-	for i := 1; i < len(stageJoiners)-1; i++ {
-		if err := stageJoiners[i].createPipe(); err != nil {
+	// Check that each of the stages' requirements are satisfiable:
+	for i := range stageJoiners {
+		if err := stageJoiners[i].validate(); err != nil {
 			closePipes()
 			return err
 		}
 	}
 
-	// Check that each of the stages' requirements are compatible with
-	// the pipes that we have created for them:
-	for i := range stageJoiners {
-		if err := stageJoiners[i].validate(); err != nil {
+	// Create the "inner" pipes (i.e, all but the first and last
+	// `stageJoiners`):
+	for i := 1; i < len(stageJoiners)-1; i++ {
+		if err := stageJoiners[i].createPipe(); err != nil {
 			closePipes()
 			return err
 		}
