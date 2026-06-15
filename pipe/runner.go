@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Env represents the environment that a pipeline stage should run in.
@@ -151,6 +152,10 @@ func (r *runner) run(ctx context.Context) error {
 // returns its stdout.
 func (r *runner) output(ctx context.Context) ([]byte, error) {
 	r.oneUse.assertNotStarted("get output")
+
+	if err := r.stdout.Close(); err != nil {
+		return nil, fmt.Errorf("closing previous stdout: %w", err)
+	}
 
 	var buf bytes.Buffer
 	r.applyOptions(WithStdout(&buf))
