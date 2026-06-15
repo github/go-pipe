@@ -238,6 +238,12 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	atomic.StoreUint32(&p.started, 1)
 	ctx, p.cancel = context.WithCancel(ctx)
+	startedOK := false
+	defer func() {
+		if !startedOK {
+			p.cancel()
+		}
+	}()
 
 	if len(p.stages) == 0 {
 		if p.stdout == nil {
@@ -290,11 +296,15 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		requirements := s.Requirements()
 		if err := requirements.Stdin.Validate(); err != nil {
 			closePipes()
-			return fmt.Errorf("stdin: %w", err)
+			return fmt.Errorf(
+				"stage %q has invalid stdin requirement: %w", s.Name(), err,
+			)
 		}
 		if err := requirements.Stdout.Validate(); err != nil {
 			closePipes()
-			return fmt.Errorf("stdout: %w", err)
+			return fmt.Errorf(
+				"stage %q has invalid stdout requirement: %w", s.Name(), err,
+			)
 		}
 
 		stageJoiners[i].nextStage = s
@@ -362,6 +372,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		}
 	}
 
+	startedOK = true
 	return nil
 }
 

@@ -1024,7 +1024,10 @@ func TestInvalidStreamRequirements(t *testing.T) {
 				Stdin: pipe.StreamRequirement(123),
 			},
 		})
-		require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 123`)
+		require.ErrorContains(
+			t, p.Run(ctx),
+			`stage "source" has invalid stdin requirement: invalid stream requirement 123`,
+		)
 		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 	})
 
@@ -1038,7 +1041,10 @@ func TestInvalidStreamRequirements(t *testing.T) {
 				Stdout: pipe.StreamRequirement(123),
 			},
 		})
-		require.ErrorContains(t, p.Run(ctx), `stdout: invalid stream requirement 123`)
+		require.ErrorContains(
+			t, p.Run(ctx),
+			`stage "sink" has invalid stdout requirement: invalid stream requirement 123`,
+		)
 		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 	})
 }
@@ -1071,7 +1077,10 @@ func TestInvalidStreamRequirement(t *testing.T) {
 			Stdin: pipe.StreamRequirement(99),
 		},
 	})
-	require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 99`)
+	require.ErrorContains(
+		t, p.Run(ctx),
+		`stage "invalid" has invalid stdin requirement: invalid stream requirement 99`,
+	)
 }
 
 func TestFunctionNoInput(t *testing.T) {
