@@ -43,6 +43,11 @@ type stageJoiner struct {
 	// prevStage holds the stage that needs to write to the pipe.
 	prevStage Stage
 
+	// prevStageReq caches `prevStage.Requirements()` so that it
+	// doesn't have to be recomputed. It is the zero value if
+	// `prevStage` is nil.
+	prevStageReq StageRequirements
+
 	// prevStdout will be used as the stdout of `prevStage`. It is
 	// usually the "write" end of the `(nextStdin, prevStdout)` pipe
 	// pair, with the connected pipe ends in the same `stageJoiner`
@@ -51,6 +56,11 @@ type stageJoiner struct {
 
 	// nextStage holds the stage that needs to read from the pipe.
 	nextStage Stage
+
+	// nextStageReq caches `nextStage.Requirements()` so that it
+	// doesn't have to be recomputed. It is the zero value if
+	// `nextStage` is nil.
+	nextStageReq StageRequirements
 
 	// nextStdin will be used as the stdin of `nextStage`. It is
 	// usually the "read" end of the `(nextStdin, prevStdout)` pipe
@@ -61,13 +71,8 @@ type stageJoiner struct {
 // needFilePipe returns `true` if the pipe that joins the two adjacent
 // stages should be an `os.Pipe()` rather than an `io.Pipe()`.
 func (sj *stageJoiner) needFilePipe() bool {
-	if sj.prevStage.Requirements().Stdout == StreamPreferFile {
-		return true
-	}
-	if sj.nextStage.Requirements().Stdin == StreamPreferFile {
-		return true
-	}
-	return false
+	return sj.prevStageReq.Stdout == StreamPreferFile ||
+		sj.nextStageReq.Stdin == StreamPreferFile
 }
 
 func (sj *stageJoiner) createPipe() error {
@@ -105,8 +110,7 @@ func (sj *stageJoiner) closePipe() error {
 // created if the stage requirements are `StreamForbidden`.
 func (sj *stageJoiner) validate() error {
 	if sj.prevStage != nil {
-		stdoutRequirements := sj.prevStage.Requirements().Stdout
-		if stdoutRequirements == StreamForbidden && sj.prevStdout != nil {
+		if sj.prevStageReq.Stdout == StreamForbidden && sj.prevStdout != nil {
 			return fmt.Errorf(
 				"stage %q forbids stdout, but stdout is connected", sj.prevStage.Name(),
 			)
@@ -114,8 +118,7 @@ func (sj *stageJoiner) validate() error {
 	}
 
 	if sj.nextStage != nil {
-		stdinRequirements := sj.nextStage.Requirements().Stdin
-		if stdinRequirements == StreamForbidden && sj.nextStdin != nil {
+		if sj.nextStageReq.Stdin == StreamForbidden && sj.nextStdin != nil {
 			return fmt.Errorf(
 				"stage %q forbids stdin, but stdin is connected", sj.nextStage.Name(),
 			)
