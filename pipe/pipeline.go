@@ -55,12 +55,10 @@ type ContextValuesFunc func(context.Context) []EnvVar
 type Pipeline struct {
 	env Env
 
-	stdin        io.Reader
-	stdinCloser  io.Closer
-	stdout       io.Writer
-	stdoutCloser io.Closer
-	stages       []Stage
-	cancel       func()
+	stdin  *InputStream
+	stdout *OutputStream
+	stages []Stage
+	cancel func()
 
 	// Atomically written and read value, nonzero if the pipeline has
 	// been started. This is only used for lifecycle sanity checks but
@@ -104,8 +102,7 @@ func WithDir(dir string) Option {
 // even if `Start()` returns an error.
 func WithStdin(stdin io.Reader) Option {
 	return func(p *Pipeline) {
-		p.stdin = stdin
-		p.stdinCloser = nil
+		p.stdin = Input(stdin)
 	}
 }
 
@@ -114,8 +111,7 @@ func WithStdin(stdin io.Reader) Option {
 // even if `Start()` returns an error.
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
-		p.stdout = stdout
-		p.stdoutCloser = nil
+		p.stdout = Output(stdout)
 	}
 }
 
@@ -125,8 +121,7 @@ func WithStdout(stdout io.Writer) Option {
 // an error.
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return func(p *Pipeline) {
-		p.stdout = stdout
-		p.stdoutCloser = stdout
+		p.stdout = ClosingOutput(stdout)
 	}
 }
 
@@ -225,8 +220,8 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 
 type stageStarter struct {
 	requirements StageRequirements
-	stdin        InputStream
-	stdout       OutputStream
+	stdin        *InputStream
+	stdout       *OutputStream
 }
 
 func (requirement StreamRequirement) validate() error {
@@ -255,9 +250,7 @@ func (requirements StageRequirements) validate(s Stage, stdinConnected, stdoutCo
 }
 
 func (p *Pipeline) abortBeforeStart(s Stage, err error) error {
-	if p.stdoutCloser != nil {
-		_ = p.stdoutCloser.Close()
-	}
+	_ = p.stdout.Close()
 	p.cancel()
 	p.eventHandler(&Event{
 		Command: s.Name(),
@@ -335,16 +328,13 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	if p.stdin != nil {
 		// Arrange for the input of the 0th stage to come from
 		// `p.stdin`:
-		stageStarters[0].stdin = Input(p.stdin)
+		stageStarters[0].stdin = p.stdin
 	}
 
 	if p.stdout != nil {
-		i := len(p.stages) - 1
-		ss := &stageStarters[i]
-		ss.stdout = OutputStream{
-			writer: p.stdout,
-			closer: p.stdoutCloser,
-		}
+		// Arrange for the output of the last stage to go to
+		// `p.stdout`:
+		stageStarters[len(p.stages)-1].stdout = p.stdout
 	}
 
 	// Clean up any processes and pipes that have been created. `i` is the
@@ -355,13 +345,13 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// the previous stage was writing to. That should cause it to exit
 		// even if it's not minding its context.
 		if closeFailedStageStdin {
-			stageStarters[i].stdin.Close()
+			_ = stageStarters[i].stdin.Close()
 		}
 
 		// If stdout was supplied with WithStdoutCloser but the final stage
 		// was never started, then the pipeline still owns that closer.
-		if i < len(p.stages)-1 && p.stdoutCloser != nil {
-			_ = p.stdoutCloser.Close()
+		if i < len(p.stages)-1 {
+			_ = p.stdout.Close()
 		}
 
 		// Kill and wait for any stages that have been started
@@ -407,7 +397,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			ctx, p.stageOptions(),
 			ss.stdin, ss.stdout,
 		); err != nil {
-			nextSS.stdin.Close()
+			_ = nextSS.stdin.Close()
 			return abort(i, err, false)
 		}
 	}
@@ -433,8 +423,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
 	var buf bytes.Buffer
-	p.stdout = &buf
-	p.stdoutCloser = nil
+	p.stdout = Output(&buf)
 	err := p.Run(ctx)
 	return buf.Bytes(), err
 }

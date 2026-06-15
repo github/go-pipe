@@ -42,9 +42,11 @@ func TestCommandStageStdoutFastPath(t *testing.T) {
 			cmd := exec.Command("true")
 			s := CommandStage("true", cmd).(*commandStage)
 
-			stdout := OutputStream{writer: f}
+			var stdout *OutputStream
 			if tc.closingStdout {
 				stdout = ClosingOutput(f)
+			} else {
+				stdout = Output(f)
 			}
 
 			require.NoError(t, s.Start(ctx, StageOptions{}, Input(nil), stdout))

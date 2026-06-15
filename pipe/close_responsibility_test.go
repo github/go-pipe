@@ -15,22 +15,22 @@ import (
 // readCloseSpy records whether Close was called.
 type readCloseSpy struct {
 	io.Reader
-	closed atomic.Bool
+	closeCount atomic.Uint32
 }
 
 func (r *readCloseSpy) Close() error {
-	r.closed.Store(true)
+	r.closeCount.Add(1)
 	return nil
 }
 
 // writeCloseSpy records whether Close was called.
 type writeCloseSpy struct {
 	io.Writer
-	closed atomic.Bool
+	closeCount atomic.Uint32
 }
 
 func (w *writeCloseSpy) Close() error {
-	w.closed.Store(true)
+	w.closeCount.Add(1)
 	return nil
 }
 
@@ -63,28 +63,52 @@ func TestGoStageHonorsStreamOwnership(t *testing.T) {
 			))
 			require.NoError(t, s.Wait())
 
-			assert.Equal(t, !tc.leaveIn, in.closed.Load(), "closing stdin=%v", !tc.leaveIn)
-			assert.Equal(t, !tc.leaveOut, out.closed.Load(), "closing stdout=%v", !tc.leaveOut)
+			if tc.leaveIn {
+				assert.EqualValues(t, 0, in.closeCount.Load(), "closing stdin=%v", !tc.leaveIn)
+			} else {
+				assert.EqualValues(t, 1, in.closeCount.Load(), "closing stdin=%v", !tc.leaveIn)
+			}
+			if tc.leaveOut {
+				assert.EqualValues(t, 0, out.closeCount.Load(), "closing stdout=%v", !tc.leaveOut)
+			} else {
+				assert.EqualValues(t, 1, out.closeCount.Load(), "closing stdout=%v", !tc.leaveOut)
+			}
 		})
 	}
 }
 
 func TestStreamConstructorsPreserveOwnershipAndDynamicType(t *testing.T) {
-	borrowedInput := strings.NewReader("borrowed")
-	assert.Same(t, borrowedInput, Input(borrowedInput).Reader())
-	assert.Nil(t, Input(borrowedInput).Closer())
+	borrowedReader := &readCloseSpy{Reader: strings.NewReader("borrowed")}
+	borrowedInput := Input(borrowedReader)
+	assert.Same(t, borrowedReader, borrowedInput.Reader())
+	assert.NoError(t, borrowedInput.Close())
+	assert.EqualValues(t, 0, borrowedReader.closeCount.Load())
+	assert.NoError(t, borrowedInput.Close())
+	assert.EqualValues(t, 0, borrowedReader.closeCount.Load())
 
-	ownedInput := &readCloseSpy{Reader: strings.NewReader("owned")}
-	assert.Same(t, ownedInput, ClosingInput(ownedInput).Reader())
-	assert.Same(t, ownedInput, ClosingInput(ownedInput).Closer())
+	ownedReader := &readCloseSpy{Reader: strings.NewReader("owned")}
+	ownedInput := ClosingInput(ownedReader)
+	assert.Same(t, ownedReader, ownedInput.Reader())
+	assert.NoError(t, ownedInput.Close())
+	assert.EqualValues(t, 1, ownedReader.closeCount.Load())
+	assert.NoError(t, ownedInput.Close())
+	assert.EqualValues(t, 1, ownedReader.closeCount.Load())
 
-	borrowedOutput := &strings.Builder{}
-	assert.Same(t, borrowedOutput, Output(borrowedOutput).Writer())
-	assert.Nil(t, Output(borrowedOutput).Closer())
+	borrowedWriter := &writeCloseSpy{Writer: &strings.Builder{}}
+	borrowedOutput := Output(borrowedWriter)
+	assert.Same(t, borrowedWriter, borrowedOutput.Writer())
+	assert.NoError(t, borrowedOutput.Close())
+	assert.EqualValues(t, 0, borrowedWriter.closeCount.Load())
+	assert.NoError(t, borrowedOutput.Close())
+	assert.EqualValues(t, 0, borrowedWriter.closeCount.Load())
 
-	ownedOutput := &writeCloseSpy{Writer: io.Discard}
-	assert.Same(t, ownedOutput, ClosingOutput(ownedOutput).Writer())
-	assert.Same(t, ownedOutput, ClosingOutput(ownedOutput).Closer())
+	ownedWriter := &writeCloseSpy{Writer: &writeCloseSpy{Writer: io.Discard}}
+	ownedOutput := ClosingOutput(ownedWriter)
+	assert.Same(t, ownedWriter, ownedOutput.Writer())
+	assert.NoError(t, ownedOutput.Close())
+	assert.EqualValues(t, 1, ownedWriter.closeCount.Load())
+	assert.NoError(t, ownedOutput.Close())
+	assert.EqualValues(t, 1, ownedWriter.closeCount.Load())
 }
 
 // TestCommandStageHonorsCloseStdin verifies that a command stage closes a
@@ -109,7 +133,11 @@ func TestCommandStageHonorsCloseStdin(t *testing.T) {
 			))
 			require.NoError(t, s.Wait())
 
-			assert.Equal(t, !leave, in.closed.Load(), "closing stdin=%v", !leave)
+			if leave {
+				assert.EqualValues(t, 0, in.closeCount.Load(), "closing stdin=%v", !leave)
+			} else {
+				assert.EqualValues(t, 1, in.closeCount.Load(), "closing stdin=%v", !leave)
+			}
 		})
 	}
 }
@@ -136,19 +164,23 @@ func TestCommandStageHonorsCloseStdout(t *testing.T) {
 			))
 			require.NoError(t, s.Wait())
 
-			assert.Equal(t, !leave, out.closed.Load(), "closing stdout=%v", !leave)
+			if leave {
+				assert.EqualValues(t, 0, out.closeCount.Load(), "closing stdout=%v", !leave)
+			} else {
+				assert.EqualValues(t, 1, out.closeCount.Load(), "closing stdout=%v", !leave)
+			}
 		})
 	}
 }
 
-func inputForTest(r io.ReadCloser, closing bool) InputStream {
+func inputForTest(r io.ReadCloser, closing bool) *InputStream {
 	if closing {
 		return ClosingInput(r)
 	}
 	return Input(r)
 }
 
-func outputForTest(w io.WriteCloser, closing bool) OutputStream {
+func outputForTest(w io.WriteCloser, closing bool) *OutputStream {
 	if closing {
 		return ClosingOutput(w)
 	}
