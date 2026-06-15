@@ -1010,6 +1010,39 @@ func TestStreamForbiddenStdout(t *testing.T) {
 	})
 }
 
+func TestInvalidStreamRequirements(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("stdin", func(t *testing.T) {
+		t.Parallel()
+		stdout := &closeTrackingWriter{}
+		p := pipe.New(pipe.WithStdoutCloser(stdout))
+		p.Add(requirementStage{
+			name: "source",
+			requirement: pipe.StageRequirements{
+				Stdin: pipe.StreamRequirement(123),
+			},
+		})
+		require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 123`)
+		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
+	})
+
+	t.Run("stdout", func(t *testing.T) {
+		t.Parallel()
+		stdout := &closeTrackingWriter{}
+		p := pipe.New(pipe.WithStdoutCloser(stdout))
+		p.Add(requirementStage{
+			name: "sink",
+			requirement: pipe.StageRequirements{
+				Stdout: pipe.StreamRequirement(123),
+			},
+		})
+		require.ErrorContains(t, p.Run(ctx), `stdout: invalid stream requirement 123`)
+		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
+	})
+}
+
 func TestStreamForbiddenMiddleStage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -289,9 +289,11 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		// Make sure that the stage's requirements are well-formed:
 		requirements := s.Requirements()
 		if err := requirements.Stdin.Validate(); err != nil {
+			closePipes()
 			return fmt.Errorf("stdin: %w", err)
 		}
 		if err := requirements.Stdout.Validate(); err != nil {
+			closePipes()
 			return fmt.Errorf("stdout: %w", err)
 		}
 
