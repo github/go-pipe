@@ -24,7 +24,7 @@ import (
 //
 // From the point of view of the pipeline as a whole, if stdin is
 // provided by the user (`WithStdin()`), then we don't want the first
-// stage to close it at all. This is arranged by by passing a
+// stage to close it at all. This is arranged by passing a
 // non-closing `InputStream` when it starts that stage. For stdout, it
 // depends on whether the user supplied it using `WithStdout()` or
 // `WithStdoutCloser()`, and in the former case provides the last
