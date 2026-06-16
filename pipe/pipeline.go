@@ -99,6 +99,16 @@ func WithDir(dir string) Option {
 // WithStdin assigns stdin to the first command in the pipeline. The
 // caller retains ownership of stdin; the pipeline will not close it,
 // even if `Start()` returns an error.
+//
+// If the first stage is a `Command` and stdin is not an `*os.File`,
+// `exec.Cmd` has to copy stdin through an internal goroutine, and
+// `Cmd.Wait()` waits for that copy to finish. This is fine for bounded
+// readers such as `strings.Reader` and `bytes.Reader`, and for
+// `*os.File` values, which are passed to the command directly. But a
+// borrowed, non-file reader that can block forever can also block the
+// pipeline forever if the command exits without consuming all of its
+// stdin. See `TestPipelineIOPipeStdinThatIsNeverClosed` for the known
+// limitation.
 func WithStdin(stdin io.Reader) Option {
 	return func(p *Pipeline) {
 		p.stdin = Input(stdin)
