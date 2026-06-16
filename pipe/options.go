@@ -99,6 +99,16 @@ func WithDir(dir string) ConfigOption {
 // WithStdin assigns stdin for the runner. The caller retains
 // ownership of stdin; the runner will not close it, even if `Start()`
 // returns an error.
+//
+// If this stdin is connected to a `Command` stage and is not an
+// `*os.File`, `exec.Cmd` has to copy stdin through an internal
+// goroutine, and `Cmd.Wait()` waits for that copy to finish. This is
+// fine for bounded readers such as `strings.Reader` and
+// `bytes.Reader`, and for `*os.File` values, which are passed to the
+// command directly. But a borrowed, non-file reader that can block
+// forever can also block the runner forever if the command exits
+// without consuming all of its stdin. See
+// `TestPipelineIOPipeStdinThatIsNeverClosed` for the known limitation.
 func WithStdin(stdin io.Reader) Option {
 	return newFuncOption(
 		func(r *runner) {
