@@ -32,8 +32,8 @@ var FinishEarly = errors.New("finish stage early")
 
 type AppendVars func(context.Context, []EnvVar) []EnvVar
 
-// EnvVar represents an environment variable that will be provided to any child
-// process spawned in this pipeline.
+// EnvVar represents an environment variable that will be provided to
+// any child process.
 type EnvVar struct {
 	// The name of the environment variable.
 	Key string
@@ -41,7 +41,7 @@ type EnvVar struct {
 	Value string
 }
 
-// runner is able to run a single `Stage`.
+// runner runs a `Stage`. A `runner` can only be used once.
 type runner struct {
 	env Env
 
@@ -63,39 +63,50 @@ func newRunner(stage Stage, options ...Option) *runner {
 		eventHandler: emptyEventHandler,
 	}
 
-	for _, option := range options {
-		option(r)
-	}
+	r.applyOptions(options...)
 
 	return r
+}
+
+// applyOptions applies `options` to `r` in place (in addition to any
+// options that have already been applied).
+func (r *runner) applyOptions(options ...Option) {
+	for _, option := range options {
+		option.applyAtStart(r)
+	}
 }
 
 func (r *runner) stageOptions() StageOptions {
 	return StageOptions{Env: r.env, PanicHandler: r.panicHandler}
 }
 
-// Start starts the stage. If `Start()` exits without an error,
-// `Wait()` must also be called, to allow all resources to be freed.
+type WaitFunc func() error
+
+func nopWait(err error) WaitFunc {
+	return func() error { return err }
+}
+
+// start starts the stage. If `start()` exits without an error, the
+// returned `Waiter` must also be called exactly once, to learn about
+// any errors and to allow all resources to be freed.
 //
-// If `Start()` returns an error, `Wait()` must not be called. Before
-// returning an error, `Start()` cancels and waits for any stages that
-// were started, closes any inter-stage pipes that the pipeline owns,
-// and closes stdout if it was supplied with `WithStdoutCloser()`.
-// Streams supplied with `WithStdin()` or `WithStdout()` remain owned by
-// the caller and are not closed by the pipeline.
-func (r *runner) Start(ctx context.Context) error {
-	return r.stage.Start(ctx, r.stageOptions(), r.stdin, r.stdout)
+// If `start()` returns an error, the returned `Waiter` is a NOP that
+// returns the same error. Before returning an error, `start()`
+// cancels and waits for any stages that were started, closes any
+// inter-stage pipes that the pipeline owns, and closes stdin/stdout
+// if required. Streams that were supplied with `WithStdin()` or
+// `WithStdout()` remain owned by the caller and are never closed by
+// `runner`.
+func (r *runner) start(ctx context.Context) (WaitFunc, error) {
+	if err := r.stage.Start(ctx, r.stageOptions(), r.stdin, r.stdout); err != nil {
+		return nopWait(err), err
+	}
+
+	return r.wait, nil
 }
 
-func (r *runner) Output(ctx context.Context) ([]byte, error) {
-	var buf bytes.Buffer
-	r.stdout = Output(&buf)
-	err := r.Run(ctx)
-	return buf.Bytes(), err
-}
-
-// Wait waits for each stage in the pipeline to exit.
-func (r *runner) Wait() error {
+// wait is the `WaitFunc` that is normally returned by `start()`.
+func (r *runner) wait() error {
 	err := r.stage.Wait()
 
 	// Handle errors:
@@ -119,13 +130,19 @@ func (r *runner) Wait() error {
 	return nil
 }
 
-// Run starts and waits for the commands in the pipeline. If startup
-// fails, it returns the `Start()` error after `Start()` has performed
-// its failure cleanup.
-func (r *runner) Run(ctx context.Context) error {
-	if err := r.Start(ctx); err != nil {
-		return err
-	}
+// run starts `stage` and waits for it to finish.
+func (r *runner) run(ctx context.Context) error {
+	// If start returns an error, the same error is returned by
+	// `wait`.
+	wait, _ := r.start(ctx)
+	return wait()
+}
 
-	return r.Wait()
+// output starts `stage`, waits for it to finish, and collects and
+// returns its stdout.
+func (r *runner) output(ctx context.Context) ([]byte, error) {
+	var buf bytes.Buffer
+	r.applyOptions(WithStdout(&buf))
+	err := r.run(ctx)
+	return buf.Bytes(), err
 }
