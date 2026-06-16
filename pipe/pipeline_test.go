@@ -54,6 +54,75 @@ func TestPipelineEmptyOutput(t *testing.T) {
 	}
 }
 
+func TestPipelineDuplicateStdin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var stdin1, stdin2 bytes.Buffer
+	p := pipe.New(
+		pipe.WithStdin(&stdin1),
+		pipe.WithStdin(&stdin2),
+	)
+
+	err := p.Run(ctx)
+	if assert.Error(t, err) {
+		assert.Equal(t, `stdin set multiple times for "pipeline"`, err.Error())
+	}
+}
+
+func TestPipelineDuplicateStdout(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout1 := &closeTrackingWriter{}
+	stdout2 := &closeTrackingWriter{}
+	p := pipe.New(
+		pipe.WithStdout(stdout1),
+		pipe.WithStdout(stdout2),
+	)
+
+	err := p.Run(ctx)
+	if assert.Error(t, err) {
+		assert.Equal(t, `stdout set multiple times for "pipeline"`, err.Error())
+		assert.False(t, stdout1.closed, "WithStdoutCloser destination should not be closed")
+		assert.False(t, stdout2.closed, "WithStdoutCloser destination should not be closed")
+	}
+}
+
+func TestPipelineDuplicateStdoutClosing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout1 := &closeTrackingWriter{}
+	stdout2 := &closeTrackingWriter{}
+	p := pipe.New(
+		pipe.WithStdoutCloser(stdout1),
+		pipe.WithStdoutCloser(stdout2),
+	)
+
+	err := p.Run(ctx)
+	if assert.Error(t, err) {
+		assert.Equal(t, `stdout set multiple times for "pipeline"`, err.Error())
+		assert.True(t, stdout1.closed, "WithStdoutCloser destination should be closed")
+		assert.True(t, stdout2.closed, "WithStdoutCloser destination should be closed")
+	}
+}
+
+func TestPipelineStdoutAndOutput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout := &closeTrackingWriter{}
+	p := pipe.New(
+		pipe.WithStdin(strings.NewReader("hello world\n")),
+		pipe.WithStdoutCloser(stdout),
+	)
+
+	out, err := p.Output(ctx)
+	if assert.Error(t, err) {
+		assert.Nil(t, out)
+		assert.Equal(t, `Output() called for "pipeline" but stdout is already set`, err.Error())
+		assert.Equal(t, "", stdout.buf.String())
+		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
+	}
+}
+
 func TestPipelineEmptyWithStdoutCloser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

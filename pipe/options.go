@@ -2,6 +2,8 @@ package pipe
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 )
 
@@ -116,7 +118,14 @@ func WithDir(dir string) ConfigOption {
 func WithStdin(stdin io.Reader) Option {
 	return newFuncOption(
 		func(r *runner) {
-			r.stdin = Input(stdin)
+			if r.stdin != nil {
+				r.configErr = errors.Join(
+					r.configErr,
+					fmt.Errorf("stdin set multiple times for %q", r.stage.Name()),
+				)
+			} else {
+				r.stdin = Input(stdin)
+			}
 		},
 	)
 }
@@ -127,7 +136,14 @@ func WithStdin(stdin io.Reader) Option {
 func WithStdout(stdout io.Writer) Option {
 	return newFuncOption(
 		func(r *runner) {
-			r.stdout = Output(stdout)
+			if r.stdout != nil {
+				r.configErr = errors.Join(
+					r.configErr,
+					fmt.Errorf("stdout set multiple times for %q", r.stage.Name()),
+				)
+			} else {
+				r.stdout = Output(stdout)
+			}
 		},
 	)
 }
@@ -138,7 +154,15 @@ func WithStdout(stdout io.Writer) Option {
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return newFuncOption(
 		func(r *runner) {
-			r.stdout = ClosingOutput(stdout)
+			if r.stdout != nil {
+				r.configErr = errors.Join(
+					r.configErr,
+					fmt.Errorf("stdout set multiple times for %q", r.stage.Name()),
+				)
+				_ = stdout.Close()
+			} else {
+				r.stdout = ClosingOutput(stdout)
+			}
 		},
 	)
 }

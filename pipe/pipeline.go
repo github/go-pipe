@@ -20,7 +20,7 @@ type Pipeline struct {
 // `Runner`, it permits any `StartOption`s as options (not only
 // `RunnerOption`s).
 func New(options ...Option) *Pipeline {
-	p := NewPipe("")
+	p := NewPipe("pipeline")
 	r := newRunner(p, options...)
 	return &Pipeline{
 		r: r,

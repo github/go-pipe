@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Env represents the environment that a pipeline stage should run in.
@@ -52,6 +53,8 @@ type runner struct {
 
 	eventHandler EventHandler
 	panicHandler StagePanicHandler
+
+	configErr error
 
 	oneUse oneUse
 }
@@ -105,6 +108,12 @@ func nopWait(err error) WaitFunc {
 func (r *runner) start(ctx context.Context) (WaitFunc, error) {
 	r.oneUse.assertStarting("start")
 
+	if r.configErr != nil {
+		_ = r.stdin.Close()
+		_ = r.stdout.Close()
+		return nopWait(r.configErr), r.configErr
+	}
+
 	if err := r.stage.Start(ctx, r.stageOptions(), r.stdin, r.stdout); err != nil {
 		return nopWait(err), err
 	}
@@ -151,6 +160,14 @@ func (r *runner) run(ctx context.Context) error {
 // returns its stdout.
 func (r *runner) output(ctx context.Context) ([]byte, error) {
 	r.oneUse.assertNotStarted("get output")
+
+	if r.stdout != nil {
+		_ = r.stdin.Close()
+		_ = r.stdout.Close()
+		return nil, fmt.Errorf(
+			"Output() called for %q but stdout is already set", r.stage.Name(),
+		)
+	}
 
 	var buf bytes.Buffer
 	r.applyOptions(WithStdout(&buf))
