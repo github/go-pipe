@@ -112,9 +112,13 @@ func TestWithExtraEnvDoesNotShareVarsBackingArray(t *testing.T) {
 		})
 	}
 
-	p := New(func(p *Pipeline) {
-		p.env.Vars = baseVars
-	})
+	p := New(
+		newConfigOption(
+			func(r *runner) {
+				r.env.Vars = baseVars
+			},
+		),
+	)
 	p.Add(
 		WithExtraEnv(
 			Function("first", func(ctx context.Context, env Env, _ io.Reader, _ io.Writer) error {

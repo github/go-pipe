@@ -1,474 +1,64 @@
 package pipe
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
-	"sync/atomic"
 )
-
-// Env represents the environment that a pipeline stage should run in.
-// It is passed to `Stage.Start()`.
-type Env struct {
-	// The directory in which external commands should be executed by
-	// default.
-	Dir string
-
-	// Vars are extra environment variables. These will override any
-	// environment variables that would be inherited from the current
-	// process.
-	Vars []AppendVars
-}
-
-// FinishEarly is an error that can be returned by a `Stage` to
-// request that the iteration be ended early (possibly without reading
-// all of its input). This "error" is considered a successful return,
-// and is not reported to the caller.
-//
-//revive:disable:error-naming
-//nolint:staticcheck // ST1012: FinishEarly is the intentional name for this sentinel error
-var FinishEarly = errors.New("finish stage early")
-
-//revive:enable:error-naming
-
-type AppendVars func(context.Context, []EnvVar) []EnvVar
-
-// EnvVar represents an environment variable that will be provided to any child
-// process spawned in this pipeline.
-type EnvVar struct {
-	// The name of the environment variable.
-	Key string
-	// The value.
-	Value string
-}
-
-type ContextValueFunc func(context.Context) (string, bool)
-
-type ContextValuesFunc func(context.Context) []EnvVar
 
 // Pipeline represents a Unix-like pipe that can include multiple
 // stages, including external processes but also and stages written in
 // Go.
 type Pipeline struct {
-	env Env
+	r *runner
 
-	stdin  *InputStream
-	stdout *OutputStream
-	stages []Stage
-	cancel func()
+	p *Pipe
 
-	// Atomically written and read value, nonzero if the pipeline has
-	// been started. This is only used for lifecycle sanity checks but
-	// does not guarantee that clients are using the class correctly.
-	started uint32
-
-	eventHandler func(e *Event)
-	panicHandler StagePanicHandler
+	wait WaitFunc
 }
-
-var emptyEventHandler = func(_ *Event) {}
-
-type NewPipeFn func(opts ...Option) *Pipeline
 
 // NewPipeline returns a Pipeline struct with all of the `options`
-// applied.
+// applied. Since `Pipeline` doesn't allow external access to its
+// `Runner`, it permits any `StartOption`s as options (not only
+// `RunnerOption`s).
 func New(options ...Option) *Pipeline {
-	p := &Pipeline{
-		eventHandler: emptyEventHandler,
+	p := NewPipe("")
+	r := newRunner(p, options...)
+	return &Pipeline{
+		r: r,
+		p: p,
 	}
-
-	for _, option := range options {
-		option(p)
-	}
-
-	return p
-}
-
-// Option is a type alias for Pipeline functional options.
-type Option func(*Pipeline)
-
-// WithDir sets the default directory for running external commands.
-func WithDir(dir string) Option {
-	return func(p *Pipeline) {
-		p.env.Dir = dir
-	}
-}
-
-// WithStdin assigns stdin to the first command in the pipeline. The
-// caller retains ownership of stdin; the pipeline will not close it,
-// even if `Start()` returns an error.
-func WithStdin(stdin io.Reader) Option {
-	return func(p *Pipeline) {
-		p.stdin = Input(stdin)
-	}
-}
-
-// WithStdout assigns stdout to the last command in the pipeline. The
-// caller retains ownership of stdout; the pipeline will not close it,
-// even if `Start()` returns an error.
-func WithStdout(stdout io.Writer) Option {
-	return func(p *Pipeline) {
-		p.stdout = Output(stdout)
-	}
-}
-
-// WithStdoutCloser assigns stdout to the last command in the
-// pipeline, and closes stdout when the pipeline is done with it. The
-// pipeline is responsible for closing stdout even if `Start()` returns
-// an error.
-func WithStdoutCloser(stdout io.WriteCloser) Option {
-	return func(p *Pipeline) {
-		p.stdout = ClosingOutput(stdout)
-	}
-}
-
-// WithEnvVar appends an environment variable for the pipeline.
-func WithEnvVar(key, value string) Option {
-	return func(p *Pipeline) {
-		p.env.Vars = append(p.env.Vars, func(_ context.Context, vars []EnvVar) []EnvVar {
-			return append(vars, EnvVar{Key: key, Value: value})
-		})
-	}
-}
-
-// WithEnvVars appends several environment variable for the pipeline.
-func WithEnvVars(b []EnvVar) Option {
-	return func(p *Pipeline) {
-		p.env.Vars = append(p.env.Vars, func(_ context.Context, a []EnvVar) []EnvVar {
-			return append(a, b...)
-		})
-	}
-}
-
-// WithEnvVarFunc appends a context-based environment variable for the pipeline.
-func WithEnvVarFunc(key string, valueFunc ContextValueFunc) Option {
-	return func(p *Pipeline) {
-		p.env.Vars = append(p.env.Vars, func(ctx context.Context, vars []EnvVar) []EnvVar {
-			if val, ok := valueFunc(ctx); ok {
-				return append(vars, EnvVar{Key: key, Value: val})
-			}
-			return vars
-		})
-	}
-}
-
-// WithEnvVarsFunc appends several context-based environment variables for the pipeline.
-func WithEnvVarsFunc(valuesFunc ContextValuesFunc) Option {
-	return func(p *Pipeline) {
-		p.env.Vars = append(p.env.Vars, func(ctx context.Context, vars []EnvVar) []EnvVar {
-			return append(vars, valuesFunc(ctx)...)
-		})
-	}
-}
-
-// Event represents anything that could happen during the pipeline execution
-type Event struct {
-	Command string
-	Msg     string
-	Err     error
-	Context map[string]interface{}
-}
-
-// WithEventHandler sets a handler for the pipeline. Setting one will emit
-// and event for each process.
-func WithEventHandler(handler func(e *Event)) Option {
-	return func(p *Pipeline) {
-		p.eventHandler = handler
-	}
-}
-
-// WithStagePanicHandler sets a panic handler for the stages within a pipeline.
-// When a pipeline stage panics, the provided handler will be invoked, allowing
-// the client to handle the panic in whatever way they see fit.
-//
-// Note:
-//   - The client is responsible for deciding whether to recover from the panic or panicking again.
-//   - If a panic handler is not set, the panic will be propagated normally.
-func WithStagePanicHandler(ph StagePanicHandler) Option {
-	return func(p *Pipeline) {
-		p.panicHandler = ph
-	}
-}
-
-func (p *Pipeline) hasStarted() bool {
-	return atomic.LoadUint32(&p.started) != 0
 }
 
 // Add appends one or more stages to the pipeline.
 func (p *Pipeline) Add(stages ...Stage) {
-	if p.hasStarted() {
-		panic("attempt to modify a pipeline that has already started")
-	}
-
-	p.stages = append(p.stages, stages...)
+	p.p.Add(stages...)
 }
 
 // AddWithIgnoredError appends one or more stages that are ignoring
 // the passed in error to the pipeline.
 func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
-	if p.hasStarted() {
-		panic("attempt to modify a pipeline that has already started")
-	}
-
-	for _, stage := range stages {
-		p.stages = append(p.stages, IgnoreError(stage, em))
-	}
+	p.p.AddWithIgnoredError(em, stages...)
 }
 
-func (p *Pipeline) stageOptions() StageOptions {
-	return StageOptions{Env: p.env, PanicHandler: p.panicHandler}
-}
-
-// Start starts the commands in the pipeline. If `Start()` exits
-// without an error, `Wait()` must also be called, to allow all
-// resources to be freed.
-//
-// If `Start()` returns an error, `Wait()` must not be called. Before
-// returning an error, `Start()` cancels and waits for any stages that
-// were started, closes any inter-stage pipes that the pipeline owns,
-// and closes stdout if it was supplied with `WithStdoutCloser()`.
-// Streams supplied with `WithStdin()` or `WithStdout()` remain owned by
-// the caller and are not closed by the pipeline.
-func (p *Pipeline) Start(ctx context.Context) error {
-	if p.hasStarted() {
-		panic("attempt to start a pipeline that has already started")
-	}
-
-	atomic.StoreUint32(&p.started, 1)
-	ctx, p.cancel = context.WithCancel(ctx)
-
-	if len(p.stages) == 0 {
-		if p.stdout == nil {
-			// No stages and no destination: there is nothing to do
-			// and nowhere to put `p.stdin` even if it was set.
-			return nil
-		}
-		// No stages but a destination was configured: synthesize an
-		// identity-copy stage so that `WithStdin()` is drained into
-		// `WithStdout()`/`WithStdoutCloser()` and the destination
-		// closer (if any) is invoked.
-		p.stages = append(p.stages, Function(
-			"identity",
-			func(_ context.Context, _ Env, stdin io.Reader, stdout io.Writer) error {
-				if stdin == nil {
-					return nil
-				}
-				_, err := io.Copy(stdout, stdin)
-				return err
-			},
-		))
-	}
-
-	// We need to decide how to start the stages, especially what
-	// pipes to use to connect adjacent stages (`os.Pipe()` vs.
-	// `io.Pipe()`) based on the two stages' requirements.
-	stageJoiners := make([]stageJoiner, len(p.stages)+1)
-
-	// Arrange for the input of the 0th stage to come from `p.stdin`:
-	stageJoiners[0].nextStdin = p.stdin
-
-	// Arrange for the output of the last stage to go to `p.stdout`:
-	stageJoiners[len(p.stages)].prevStdout = p.stdout
-
-	// closePipes closes all of the streams that are currently stored
-	// in the joiners. This should be called if startup fails. As we
-	// call `Stage.Start()` and pass that method streams, we clear
-	// them from the corresponding joiners to avoid closing them
-	// twice.
-	closePipes := func() {
-		for _, sj := range stageJoiners {
-			_ = sj.closePipe()
-		}
-	}
-
-	// Store the stages in the joiners, and verify that the stages'
-	// requirements are well-formed:
-	for i, s := range p.stages {
-		// Make sure that the stage's requirements are well-formed:
-		requirements := s.Requirements()
-		if err := requirements.Stdin.Validate(); err != nil {
-			closePipes()
-			return fmt.Errorf("stdin: %w", err)
-		}
-		if err := requirements.Stdout.Validate(); err != nil {
-			closePipes()
-			return fmt.Errorf("stdout: %w", err)
-		}
-
-		stageJoiners[i].nextStage = s
-		stageJoiners[i].nextStageReq = requirements
-		stageJoiners[i+1].prevStage = s
-		stageJoiners[i+1].prevStageReq = requirements
-	}
-
-	// Check that each of the stages' requirements are satisfiable:
-	for i := range stageJoiners {
-		if err := stageJoiners[i].validate(); err != nil {
-			closePipes()
-			return err
-		}
-	}
-
-	// Create the "inner" pipes (i.e, all but the first and last
-	// `stageJoiners`):
-	for i := 1; i < len(stageJoiners)-1; i++ {
-		if err := stageJoiners[i].createPipe(); err != nil {
-			closePipes()
-			return err
-		}
-	}
-
-	// We're about to start up the stages, one by one. If something
-	// goes wrong during that process, this function should be called
-	// to kill any stages that have already been started and to close
-	// any pipes that have not yet been passed to a stage. `i` is the
-	// index of the stage that failed to start. If the stage already
-	// received its streams, it is responsible for closing them.
-	abort := func(i int, err error) error {
-		closePipes()
-
-		// Kill and wait for any stages that have been started
-		// already to finish:
-		p.cancel()
-		for _, s := range p.stages[:i] {
-			_ = s.Wait()
-		}
-		p.eventHandler(&Event{
-			Command: p.stages[i].Name(),
-			Msg:     "failed to start pipeline stage",
-			Err:     err,
-		})
-		return fmt.Errorf(
-			"starting pipeline stage %q: %w", p.stages[i].Name(), err,
-		)
-	}
-
-	// Loop over all of the stages, starting them in order.
-	for i, s := range p.stages {
-		prevSJ := &stageJoiners[i]
-		nextSJ := &stageJoiners[i+1]
-
-		err := s.Start(ctx, p.stageOptions(), prevSJ.nextStdin, nextSJ.prevStdout)
-
-		// Even if that stage failed to start, we are no longer
-		// responsible for closing its streams:
-		prevSJ.nextStdin = nil
-		nextSJ.prevStdout = nil
-
-		if err != nil {
-			return abort(i, err)
-		}
-	}
-
-	return nil
-}
-
-func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
-	var buf bytes.Buffer
-	p.stdout = Output(&buf)
-	err := p.Run(ctx)
-	return buf.Bytes(), err
-}
-
-// Wait waits for each stage in the pipeline to exit.
-func (p *Pipeline) Wait() error {
-	if !p.hasStarted() {
-		panic("unable to wait on a pipeline that has not started")
-	}
-
-	// Make sure that all of the cleanup eventually happens:
-	defer p.cancel()
-
-	var earliestStageErr error
-	var earliestFailedStage Stage
-
-	finishedEarly := false
-	for i := len(p.stages) - 1; i >= 0; i-- {
-		s := p.stages[i]
-		err := s.Wait()
-
-		// Handle errors:
-		switch {
-		case err == nil:
-			// No error to handle. But unset the `finishedEarly` flag,
-			// because earlier stages shouldn't be affected by the
-			// later stage that finished early.
-			finishedEarly = false
-			continue
-
-		case errors.Is(err, FinishEarly):
-			// We ignore `FinishEarly` errors because that is how a
-			// stage informs us that it intentionally finished early.
-			// Moreover, if we see a `FinishEarly` error, ignore any
-			// pipe error from the immediately preceding stage,
-			// because it probably came from trying to write to this
-			// stage after this stage closed its stdin.
-			finishedEarly = true
-			continue
-
-		case IsPipeError(err):
-			switch {
-			case finishedEarly:
-				// A successor stage finished early. It is common for
-				// this to cause earlier stages to fail with pipe
-				// errors. Such errors are uninteresting, so ignore
-				// them. Leave the `finishedEarly` flag set, because
-				// the preceding stage might get a pipe error from
-				// trying to write to this one.
-			case earliestStageErr != nil:
-				// A later stage has already reported an error. This
-				// means that we don't want to report the error from
-				// this stage:
-				//
-				// * If the later error was also a pipe error: we want
-				//   to report the _last_ pipe error seen, which would
-				//   be the one already recorded.
-				//
-				// * If the later error was not a pipe error: non-pipe
-				//   errors are always considered more important than
-				//   pipe errors, so again we would want to keep the
-				//   error that is already recorded.
-			default:
-				// In this case, the pipe error from this stage is the
-				// most important error that we have seen so far, so
-				// remember it:
-				earliestFailedStage, earliestStageErr = s, err
-			}
-
-		default:
-			// This stage exited with a non-pipe error. If multiple
-			// stages exited with such errors, we want to report the
-			// one that is most informative. We take that to be the
-			// error from the earliest failing stage. Since we are
-			// iterating through stages in reverse order, overwrite
-			// any existing remembered errors (which would have come
-			// from a later stage):
-			earliestFailedStage, earliestStageErr = s, err
-			finishedEarly = false
-		}
-	}
-
-	if earliestStageErr != nil {
-		p.eventHandler(&Event{
-			Command: earliestFailedStage.Name(),
-			Msg:     "command failed",
-			Err:     earliestStageErr,
-		})
-		return fmt.Errorf("%s: %w", earliestFailedStage.Name(), earliestStageErr)
-	}
-
-	return nil
-}
-
-// Run starts and waits for the commands in the pipeline. If startup
-// fails, it returns the `Start()` error after `Start()` has performed
-// its failure cleanup.
-func (p *Pipeline) Run(ctx context.Context) error {
-	if err := p.Start(ctx); err != nil {
+func (p *Pipeline) Start(ctx context.Context, options ...Option) error {
+	p.r.applyOptions(options...)
+	wait, err := p.r.start(ctx)
+	if err != nil {
 		return err
 	}
+	p.wait = wait
+	return nil
+}
 
-	return p.Wait()
+func (p *Pipeline) Wait() error {
+	return p.wait()
+}
+
+func (p *Pipeline) Run(ctx context.Context, options ...Option) error {
+	p.r.applyOptions(options...)
+	return p.r.run(ctx)
+}
+
+func (p *Pipeline) Output(ctx context.Context, options ...Option) ([]byte, error) {
+	p.r.applyOptions(options...)
+	return p.r.output(ctx)
 }

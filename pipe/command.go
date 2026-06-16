@@ -32,6 +32,8 @@ type commandStage struct {
 	// If the context expired, and we attempted to kill the command,
 	// `ctx.Err()` is stored here.
 	ctxErr atomic.Value
+
+	oneUse oneUse
 }
 
 var (
@@ -65,9 +67,10 @@ func Command(command string, args ...string) Stage {
 // the command might emit.
 func CommandStage(name string, cmd *exec.Cmd) Stage {
 	return &commandStage{
-		name: name,
-		cmd:  cmd,
-		done: make(chan struct{}),
+		name:   name,
+		cmd:    cmd,
+		done:   make(chan struct{}),
+		oneUse: oneUse{thing: "command " + name},
 	}
 }
 
@@ -90,6 +93,8 @@ func (s *commandStage) Start(
 	ctx context.Context, opts StageOptions,
 	stdin *InputStream, stdout *OutputStream,
 ) error {
+	s.oneUse.assertStarting("start")
+
 	r := stdin.Reader()
 	w := stdout.Writer()
 
@@ -307,6 +312,8 @@ func (s *commandStage) filterCmdError(err error) error {
 }
 
 func (s *commandStage) Wait() error {
+	s.oneUse.assertStarted("wait")
+
 	defer close(s.done)
 
 	// Make sure that any stderr is copied before `s.cmd.Wait()`

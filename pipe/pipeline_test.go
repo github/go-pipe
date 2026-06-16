@@ -377,7 +377,7 @@ func TestPipelineExit(t *testing.T) {
 		pipe.Command("false"),
 		pipe.Command("true"),
 	)
-	assert.EqualError(t, p.Run(ctx), "false: exit status 1")
+	assert.EqualError(t, p.Run(ctx), `command failed in stage "false": exit status 1`)
 }
 
 func TestPipelineStderr(t *testing.T) {
@@ -393,7 +393,7 @@ func TestPipelineStderr(t *testing.T) {
 
 	_, err = p.Output(ctx)
 	if assert.Error(t, err) {
-		assert.Contains(t, err.Error(), "ls: exit status")
+		assert.Contains(t, err.Error(), `command failed in stage "ls": exit status`)
 	}
 }
 
@@ -450,7 +450,7 @@ func TestLittleEPIPE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := p.Run(ctx)
-	assert.EqualError(t, err, "sh: signal: broken pipe")
+	assert.EqualError(t, err, `command failed in stage "sh": signal: broken pipe`)
 }
 
 // Verify the correct error if one command in the pipeline exits
@@ -469,7 +469,7 @@ func TestBigEPIPE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := p.Run(ctx)
-	assert.EqualError(t, err, "seq: signal: broken pipe")
+	assert.EqualError(t, err, `command failed in stage "seq": signal: broken pipe`)
 }
 
 // Verify the correct error if one command in the pipeline exits
@@ -951,6 +951,24 @@ func TestFunctionOptionsForbidStreams(t *testing.T) {
 	})
 }
 
+func TestFunctionOptionsSetStreamRequirements(t *testing.T) {
+	t.Parallel()
+
+	stage := pipe.Function(
+		"file-preferring",
+		func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
+			return nil
+		},
+		pipe.WithStdinRequirement(pipe.StreamPreferFile),
+		pipe.WithStdoutRequirement(pipe.StreamPreferFile),
+	)
+
+	assert.Equal(t, pipe.StageRequirements{
+		Stdin:  pipe.StreamPreferFile,
+		Stdout: pipe.StreamPreferFile,
+	}, stage.Requirements())
+}
+
 func TestStreamForbiddenStdin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1024,7 +1042,10 @@ func TestInvalidStreamRequirements(t *testing.T) {
 				Stdin: pipe.StreamRequirement(123),
 			},
 		})
-		require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 123`)
+		require.ErrorContains(
+			t, p.Run(ctx),
+			`stage "source" has invalid stdin requirement: invalid stream requirement 123`,
+		)
 		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 	})
 
@@ -1038,7 +1059,10 @@ func TestInvalidStreamRequirements(t *testing.T) {
 				Stdout: pipe.StreamRequirement(123),
 			},
 		})
-		require.ErrorContains(t, p.Run(ctx), `stdout: invalid stream requirement 123`)
+		require.ErrorContains(
+			t, p.Run(ctx),
+			`stage "sink" has invalid stdout requirement: invalid stream requirement 123`,
+		)
 		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 	})
 }
@@ -1071,7 +1095,10 @@ func TestInvalidStreamRequirement(t *testing.T) {
 			Stdin: pipe.StreamRequirement(99),
 		},
 	})
-	require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 99`)
+	require.ErrorContains(
+		t, p.Run(ctx),
+		`stage "invalid" has invalid stdin requirement: invalid stream requirement 99`,
+	)
 }
 
 func TestFunctionNoInput(t *testing.T) {
