@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync/atomic"
 )
 
 // Pipe is a `Stage` that consists of a bunch of other `Stage`s that
@@ -17,10 +16,7 @@ type Pipe struct {
 
 	cancel func()
 
-	// Atomically written and read value, set if the pipe has been
-	// started. This is only used for lifecycle sanity checks but does
-	// not guarantee that clients are using the class correctly.
-	started atomic.Bool
+	oneUse oneUse
 }
 
 var (
@@ -30,7 +26,8 @@ var (
 // NewPipe returns an initialized `*Pipe` with the specified `name`.
 func NewPipe(name string) *Pipe {
 	return &Pipe{
-		name: name,
+		name:   name,
+		oneUse: oneUse{thing: "Pipe"},
 	}
 }
 
@@ -51,9 +48,7 @@ func (p *Pipe) Requirements() StageRequirements {
 
 // Add appends one or more stages to the pipe.
 func (p *Pipe) Add(stages ...Stage) {
-	if p.started.Load() {
-		panic("attempt to modify a pipe that has already started")
-	}
+	p.oneUse.assertNotStarted("modify a pipe")
 
 	p.stages = append(p.stages, stages...)
 }
@@ -61,9 +56,7 @@ func (p *Pipe) Add(stages ...Stage) {
 // AddWithIgnoredError appends one or more stages, suppressing any
 // errors from those stages that match `em`.
 func (p *Pipe) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
-	if p.started.Load() {
-		panic("attempt to modify a pipe that has already started")
-	}
+	p.oneUse.assertNotStarted("modify a pipe")
 
 	for _, stage := range stages {
 		p.stages = append(p.stages, IgnoreError(stage, em))
@@ -84,9 +77,7 @@ func (p *Pipe) Start(
 	ctx context.Context, opts StageOptions,
 	stdin *InputStream, stdout *OutputStream,
 ) error {
-	if !p.started.CompareAndSwap(false, true) {
-		panic("attempt to start a pipe that has already started")
-	}
+	p.oneUse.assertStarting("start")
 
 	// We might need to cancel sub-stages if not all of them start up
 	// correctly:
@@ -226,9 +217,7 @@ func (p *Pipe) Start(
 
 // Wait waits for each stage in the pipe to exit.
 func (p *Pipe) Wait() error {
-	if !p.started.Load() {
-		panic("unable to wait on a pipe that has not started")
-	}
+	p.oneUse.assertStarted("wait")
 
 	// Make sure that all of the cleanup eventually happens:
 	defer p.cancel()

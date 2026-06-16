@@ -52,6 +52,8 @@ type runner struct {
 
 	eventHandler EventHandler
 	panicHandler StagePanicHandler
+
+	oneUse oneUse
 }
 
 var emptyEventHandler = func(_ *EventError) {}
@@ -61,6 +63,7 @@ func newRunner(stage Stage, options ...Option) *runner {
 	r := &runner{
 		stage:        stage,
 		eventHandler: emptyEventHandler,
+		oneUse:       oneUse{thing: "runner for " + stage.Name()},
 	}
 
 	r.applyOptions(options...)
@@ -71,6 +74,8 @@ func newRunner(stage Stage, options ...Option) *runner {
 // applyOptions applies `options` to `r` in place (in addition to any
 // options that have already been applied).
 func (r *runner) applyOptions(options ...Option) {
+	r.oneUse.assertNotStarted("apply options")
+
 	for _, option := range options {
 		option.applyAtStart(r)
 	}
@@ -98,6 +103,8 @@ func nopWait(err error) WaitFunc {
 // `WithStdout()` remain owned by the caller and are never closed by
 // `runner`.
 func (r *runner) start(ctx context.Context) (WaitFunc, error) {
+	r.oneUse.assertStarting("start")
+
 	if err := r.stage.Start(ctx, r.stageOptions(), r.stdin, r.stdout); err != nil {
 		return nopWait(err), err
 	}
@@ -107,6 +114,8 @@ func (r *runner) start(ctx context.Context) (WaitFunc, error) {
 
 // wait is the `WaitFunc` that is normally returned by `start()`.
 func (r *runner) wait() error {
+	r.oneUse.assertStarted("wait")
+
 	err := r.stage.Wait()
 
 	// Handle errors:
@@ -141,6 +150,8 @@ func (r *runner) run(ctx context.Context) error {
 // output starts `stage`, waits for it to finish, and collects and
 // returns its stdout.
 func (r *runner) output(ctx context.Context) ([]byte, error) {
+	r.oneUse.assertNotStarted("get output")
+
 	var buf bytes.Buffer
 	r.applyOptions(WithStdout(&buf))
 	err := r.run(ctx)

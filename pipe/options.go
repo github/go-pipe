@@ -39,10 +39,12 @@ type funcConfigOption struct {
 var _ ConfigOption = funcConfigOption{}
 
 func (opt funcConfigOption) apply(r *runner) {
+	r.oneUse.assertNotStarted("apply option")
 	opt.fn(r)
 }
 
 func (opt funcConfigOption) applyAtStart(r *runner) {
+	r.oneUse.assertNotStarted("apply option at start")
 	opt.fn(r)
 }
 
@@ -78,6 +80,8 @@ type funcOption struct {
 var _ Option = funcOption{}
 
 func (opt funcOption) applyAtStart(r *runner) {
+	r.oneUse.assertNotStarted("apply option at start")
+
 	opt.fn(r)
 }
 

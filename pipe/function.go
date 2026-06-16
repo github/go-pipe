@@ -37,6 +37,7 @@ type FunctionOption func(*goStage)
 // requirement.
 func WithStdinRequirement(requirement StreamRequirement) FunctionOption {
 	return func(s *goStage) {
+		s.oneUse.assertNotStarted("set stdin requirement")
 		s.requirements.Stdin = requirement
 	}
 }
@@ -45,6 +46,7 @@ func WithStdinRequirement(requirement StreamRequirement) FunctionOption {
 // requirement.
 func WithStdoutRequirement(requirement StreamRequirement) FunctionOption {
 	return func(s *goStage) {
+		s.oneUse.assertNotStarted("set stdout requirement")
 		s.requirements.Stdout = requirement
 	}
 }
@@ -70,6 +72,7 @@ func Function(name string, f StageFunc, opts ...FunctionOption) Stage {
 		f:            f,
 		done:         make(chan struct{}),
 		requirements: StageRequirements{},
+		oneUse:       oneUse{thing: "function " + name},
 	}
 	for _, opt := range opts {
 		opt(stage)
@@ -85,6 +88,8 @@ type goStage struct {
 	done         chan struct{}
 	requirements StageRequirements
 	err          error
+
+	oneUse oneUse
 }
 
 var _ Stage = (*goStage)(nil)
@@ -101,6 +106,8 @@ func (s *goStage) Start(
 	ctx context.Context, opts StageOptions,
 	stdin *InputStream, stdout *OutputStream,
 ) error {
+	s.oneUse.assertStarting("start")
+
 	r := stdin.Reader()
 	if r == nil {
 		// treat nil as empty input.
@@ -135,6 +142,7 @@ func (s *goStage) Start(
 }
 
 func (s *goStage) Wait() error {
+	s.oneUse.assertStarted("wait")
 	<-s.done
 	return s.err
 }
