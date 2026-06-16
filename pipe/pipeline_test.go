@@ -54,6 +54,23 @@ func TestPipelineEmptyOutput(t *testing.T) {
 	}
 }
 
+func TestPipelineOutputClosesConfiguredStdoutCloser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stdout := &closeTrackingWriter{}
+	p := pipe.New(
+		pipe.WithStdin(strings.NewReader("hello world\n")),
+		pipe.WithStdoutCloser(stdout),
+	)
+
+	out, err := p.Output(ctx)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "hello world\n", string(out))
+		assert.Equal(t, "", stdout.buf.String())
+		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
+	}
+}
+
 func TestPipelineEmptyWithStdoutCloser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -951,6 +968,24 @@ func TestFunctionOptionsForbidStreams(t *testing.T) {
 	})
 }
 
+func TestFunctionOptionsSetStreamRequirements(t *testing.T) {
+	t.Parallel()
+
+	stage := pipe.Function(
+		"file-preferring",
+		func(_ context.Context, _ pipe.Env, _ io.Reader, _ io.Writer) error {
+			return nil
+		},
+		pipe.WithStdinRequirement(pipe.StreamPreferFile),
+		pipe.WithStdoutRequirement(pipe.StreamPreferFile),
+	)
+
+	assert.Equal(t, pipe.StageRequirements{
+		Stdin:  pipe.StreamPreferFile,
+		Stdout: pipe.StreamPreferFile,
+	}, stage.Requirements())
+}
+
 func TestStreamForbiddenStdin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1024,7 +1059,10 @@ func TestInvalidStreamRequirements(t *testing.T) {
 				Stdin: pipe.StreamRequirement(123),
 			},
 		})
-		require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 123`)
+		require.ErrorContains(
+			t, p.Run(ctx),
+			`stage "source" has invalid stdin requirement: invalid stream requirement 123`,
+		)
 		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 	})
 
@@ -1038,7 +1076,10 @@ func TestInvalidStreamRequirements(t *testing.T) {
 				Stdout: pipe.StreamRequirement(123),
 			},
 		})
-		require.ErrorContains(t, p.Run(ctx), `stdout: invalid stream requirement 123`)
+		require.ErrorContains(
+			t, p.Run(ctx),
+			`stage "sink" has invalid stdout requirement: invalid stream requirement 123`,
+		)
 		assert.True(t, stdout.closed, "WithStdoutCloser destination should be closed")
 	})
 }
@@ -1071,7 +1112,10 @@ func TestInvalidStreamRequirement(t *testing.T) {
 			Stdin: pipe.StreamRequirement(99),
 		},
 	})
-	require.ErrorContains(t, p.Run(ctx), `stdin: invalid stream requirement 99`)
+	require.ErrorContains(
+		t, p.Run(ctx),
+		`stage "invalid" has invalid stdin requirement: invalid stream requirement 99`,
+	)
 }
 
 func TestFunctionNoInput(t *testing.T) {

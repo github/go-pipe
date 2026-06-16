@@ -33,20 +33,32 @@ type StageFunc func(ctx context.Context, env Env, stdin io.Reader, stdout io.Wri
 // FunctionOption configures a Function stage.
 type FunctionOption func(*goStage)
 
+// WithStdinRequirement returns a FunctionOption declaring the stage's stdin
+// requirement.
+func WithStdinRequirement(requirement StreamRequirement) FunctionOption {
+	return func(s *goStage) {
+		s.requirements.Stdin = requirement
+	}
+}
+
+// WithStdoutRequirement returns a FunctionOption declaring the stage's stdout
+// requirement.
+func WithStdoutRequirement(requirement StreamRequirement) FunctionOption {
+	return func(s *goStage) {
+		s.requirements.Stdout = requirement
+	}
+}
+
 // ForbidStdin returns a FunctionOption declaring that the stage must not be
 // connected to stdin.
 func ForbidStdin() FunctionOption {
-	return func(s *goStage) {
-		s.requirements.Stdin = StreamForbidden
-	}
+	return WithStdinRequirement(StreamForbidden)
 }
 
 // ForbidStdout returns a FunctionOption declaring that the stage must not be
 // connected to stdout.
 func ForbidStdout() FunctionOption {
-	return func(s *goStage) {
-		s.requirements.Stdout = StreamForbidden
-	}
+	return WithStdoutRequirement(StreamForbidden)
 }
 
 // Function returns a pipeline `Stage` that will run a `StageFunc` in
