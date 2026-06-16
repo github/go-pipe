@@ -76,12 +76,19 @@ func (p *Pipe) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 func (p *Pipe) Start(
 	ctx context.Context, opts StageOptions,
 	stdin *InputStream, stdout *OutputStream,
-) error {
+) (theErr error) {
 	p.oneUse.assertStarting("start")
 
 	// We might need to cancel sub-stages if not all of them start up
 	// correctly:
 	ctx, p.cancel = context.WithCancel(ctx)
+
+	// Be sure to free resources if startup isn't successful:
+	defer func() {
+		if theErr != nil {
+			p.cancel()
+		}
+	}()
 
 	if len(p.stages) == 0 {
 		// This is pretty pointless, but handle it by copying stdin to
@@ -90,7 +97,10 @@ func (p *Pipe) Start(
 		if stdin == nil || stdout == nil {
 			// If `stdin` and `stout` were not both provided, then
 			// there's nothing to do except close the other one if it
-			// was provided:
+			// was provided. Note that if both closes are successful,
+			// then as far as the caller is concerned this counts as a
+			// successful start, and will therefore call `Wait()`,
+			// which also does the right thing.
 			return errors.Join(
 				stdin.Close(),
 				stdout.Close(),
@@ -218,6 +228,11 @@ func (p *Pipe) Start(
 // Wait waits for each stage in the pipe to exit.
 func (p *Pipe) Wait() error {
 	p.oneUse.assertStarted("wait")
+
+	if len(p.stages) == 0 {
+		// There was nothing to do, and we did it brilliantly!
+		return nil
+	}
 
 	// Make sure that all of the cleanup eventually happens:
 	defer p.cancel()
