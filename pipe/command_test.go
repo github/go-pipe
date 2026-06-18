@@ -95,6 +95,6 @@ func TestCommandStageRecordKillErrorAcceptsDifferentErrorTypes(t *testing.T) {
 
 	got, ok := stage.ctxErr.Load().(commandKillError)
 	if assert.True(t, ok, "expected ctxErr to store commandKillError") {
-		assert.Error(t, errMemoryLimitExceeded, got.err)
+		assert.ErrorIs(t, got.err, errMemoryLimitExceeded)
 	}
 }
