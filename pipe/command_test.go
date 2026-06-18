@@ -86,15 +86,15 @@ func TestCopyEnvWithOverride(t *testing.T) {
 	}
 }
 
-func TestCommandStageRecordKillErrorAcceptsDifferentErrorTypes(t *testing.T) {
+func TestCommandStageRecordKillErrorAcceptsDifferentErrorTypesAndKeepsFirst(t *testing.T) {
 	errMemoryLimitExceeded := errors.New("memory limit exceeded")
 	var stage commandStage
 
-	stage.recordKillError(context.DeadlineExceeded)
 	stage.recordKillError(errMemoryLimitExceeded)
+	stage.recordKillError(context.DeadlineExceeded)
 
-	got, ok := stage.ctxErr.Load().(commandKillError)
-	if assert.True(t, ok, "expected ctxErr to store commandKillError") {
+	got := stage.ctxErr.Load()
+	if assert.NotNil(t, got, "expected ctxErr to store commandKillError") {
 		assert.ErrorIs(t, got.err, errMemoryLimitExceeded)
 	}
 }
