@@ -44,9 +44,8 @@ func (s *commandStage) Kill(err error) {
 	default:
 	}
 
-	// Record the `ctx.Err()`, which will be used as the error result
-	// for this stage.
-	s.ctxErr.Store(err)
+	// Record the kill reason, which will be used as the error result for this stage.
+	s.recordKillError(err)
 
 	// First try to kill using a relatively gentle signal so that
 	// the processes have a chance to clean up after themselves:

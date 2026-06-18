@@ -29,9 +29,12 @@ type commandStage struct {
 	wg     errgroup.Group
 	stderr bytes.Buffer
 
-	// If the context expired, and we attempted to kill the command,
-	// `ctx.Err()` is stored here.
+	// If we attempted to kill the command, the reason is stored here.
 	ctxErr atomic.Value
+}
+
+type commandKillError struct {
+	err error
 }
 
 var (
@@ -288,7 +291,7 @@ func (s *commandStage) filterCmdError(err error) error {
 		return err
 	}
 
-	ctxErr, ok := s.ctxErr.Load().(error)
+	ctxErr, ok := s.ctxErr.Load().(commandKillError)
 	if ok {
 		// If the process looks like it was killed by us, substitute
 		// `ctxErr` for the process's own exit error. Note that this
@@ -298,12 +301,18 @@ func (s *commandStage) filterCmdError(err error) error {
 		ps, ok := eErr.Sys().(syscall.WaitStatus)
 		if ok && ps.Signaled() &&
 			(ps.Signal() == syscall.SIGTERM || ps.Signal() == syscall.SIGKILL) {
-			return ctxErr
+			return ctxErr.err
 		}
 	}
 
 	eErr.Stderr = s.stderr.Bytes()
 	return eErr
+}
+
+func (s *commandStage) recordKillError(err error) {
+	if err != nil {
+		s.ctxErr.Store(commandKillError{err: err})
+	}
 }
 
 func (s *commandStage) Wait() error {
