@@ -1,6 +1,8 @@
 package pipe
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,5 +83,18 @@ func TestCopyEnvWithOverride(t *testing.T) {
 				copyEnvWithOverrides(ex.env, ex.overrides),
 			)
 		})
+	}
+}
+
+func TestCommandStageRecordKillErrorAcceptsDifferentErrorTypesAndKeepsFirst(t *testing.T) {
+	errMemoryLimitExceeded := errors.New("memory limit exceeded")
+	var stage commandStage
+
+	stage.recordKillError(errMemoryLimitExceeded)
+	stage.recordKillError(context.DeadlineExceeded)
+
+	got := stage.ctxErr.Load()
+	if assert.NotNil(t, got, "expected ctxErr to store commandKillError") {
+		assert.ErrorIs(t, got.err, errMemoryLimitExceeded)
 	}
 }

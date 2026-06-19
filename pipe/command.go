@@ -29,9 +29,12 @@ type commandStage struct {
 	wg     errgroup.Group
 	stderr bytes.Buffer
 
-	// If the context expired, and we attempted to kill the command,
-	// `ctx.Err()` is stored here.
-	ctxErr atomic.Value
+	// If we attempted to kill the command, the first reason is stored here.
+	ctxErr atomic.Pointer[commandKillError]
+}
+
+type commandKillError struct {
+	err error
 }
 
 var (
@@ -288,8 +291,8 @@ func (s *commandStage) filterCmdError(err error) error {
 		return err
 	}
 
-	ctxErr, ok := s.ctxErr.Load().(error)
-	if ok {
+	ctxErr := s.ctxErr.Load()
+	if ctxErr != nil {
 		// If the process looks like it was killed by us, substitute
 		// `ctxErr` for the process's own exit error. Note that this
 		// doesn't do anything on Windows, where the `Signaled()`
@@ -298,12 +301,18 @@ func (s *commandStage) filterCmdError(err error) error {
 		ps, ok := eErr.Sys().(syscall.WaitStatus)
 		if ok && ps.Signaled() &&
 			(ps.Signal() == syscall.SIGTERM || ps.Signal() == syscall.SIGKILL) {
-			return ctxErr
+			return ctxErr.err
 		}
 	}
 
 	eErr.Stderr = s.stderr.Bytes()
 	return eErr
+}
+
+func (s *commandStage) recordKillError(err error) {
+	if err != nil {
+		s.ctxErr.CompareAndSwap(nil, &commandKillError{err: err})
+	}
 }
 
 func (s *commandStage) Wait() error {
