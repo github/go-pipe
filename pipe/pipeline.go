@@ -54,8 +54,8 @@ type ContextValuesFunc func(context.Context) []EnvVar
 type Pipeline struct {
 	env Env
 
-	stdin  io.Reader
-	stdout io.WriteCloser
+	stdin  *InputStream
+	stdout *OutputStream
 	stages []Stage
 	cancel func()
 
@@ -69,14 +69,6 @@ type Pipeline struct {
 }
 
 var emptyEventHandler = func(_ *Event) {}
-
-type nopWriteCloser struct {
-	io.Writer
-}
-
-func (w nopWriteCloser) Close() error {
-	return nil
-}
 
 type NewPipeFn func(opts ...Option) *Pipeline
 
@@ -104,25 +96,41 @@ func WithDir(dir string) Option {
 	}
 }
 
-// WithStdin assigns stdin to the first command in the pipeline.
+// WithStdin assigns stdin to the first command in the pipeline. The
+// caller retains ownership of stdin; the pipeline will not close it,
+// even if `Start()` returns an error.
+//
+// If the first stage is a `Command` and stdin is not an `*os.File`,
+// `exec.Cmd` has to copy stdin through an internal goroutine, and
+// `Cmd.Wait()` waits for that copy to finish. This is fine for bounded
+// readers such as `strings.Reader` and `bytes.Reader`, and for
+// `*os.File` values, which are passed to the command directly. But a
+// borrowed, non-file reader that can block forever can also block the
+// pipeline forever if the command exits without consuming all of its
+// stdin. See `TestPipelineIOPipeStdinThatIsNeverClosed` for the known
+// limitation.
 func WithStdin(stdin io.Reader) Option {
 	return func(p *Pipeline) {
-		p.stdin = stdin
+		p.stdin = Input(stdin)
 	}
 }
 
-// WithStdout assigns stdout to the last command in the pipeline.
+// WithStdout assigns stdout to the last command in the pipeline. The
+// caller retains ownership of stdout; the pipeline will not close it,
+// even if `Start()` returns an error.
 func WithStdout(stdout io.Writer) Option {
 	return func(p *Pipeline) {
-		p.stdout = nopWriteCloser{stdout}
+		p.stdout = Output(stdout)
 	}
 }
 
 // WithStdoutCloser assigns stdout to the last command in the
-// pipeline, and closes stdout when it's done.
+// pipeline, and closes stdout when the pipeline is done with it. The
+// pipeline is responsible for closing stdout even if `Start()` returns
+// an error.
 func WithStdoutCloser(stdout io.WriteCloser) Option {
 	return func(p *Pipeline) {
-		p.stdout = stdout
+		p.stdout = ClosingOutput(stdout)
 	}
 }
 
@@ -186,7 +194,6 @@ func WithEventHandler(handler func(e *Event)) Option {
 // the client to handle the panic in whatever way they see fit.
 //
 // Note:
-//   - Only the Function stage supports this functionality.
 //   - The client is responsible for deciding whether to recover from the panic or panicking again.
 //   - If a panic handler is not set, the panic will be propagated normally.
 func WithStagePanicHandler(ph StagePanicHandler) Option {
@@ -220,9 +227,20 @@ func (p *Pipeline) AddWithIgnoredError(em ErrorMatcher, stages ...Stage) {
 	}
 }
 
+func (p *Pipeline) stageOptions() StageOptions {
+	return StageOptions{Env: p.env, PanicHandler: p.panicHandler}
+}
+
 // Start starts the commands in the pipeline. If `Start()` exits
 // without an error, `Wait()` must also be called, to allow all
 // resources to be freed.
+//
+// If `Start()` returns an error, `Wait()` must not be called. Before
+// returning an error, `Start()` cancels and waits for any stages that
+// were started, closes any inter-stage pipes that the pipeline owns,
+// and closes stdout if it was supplied with `WithStdoutCloser()`.
+// Streams supplied with `WithStdin()` or `WithStdout()` remain owned by
+// the caller and are not closed by the pipeline.
 func (p *Pipeline) Start(ctx context.Context) error {
 	if p.hasStarted() {
 		panic("attempt to start a pipeline that has already started")
@@ -230,102 +248,155 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	atomic.StoreUint32(&p.started, 1)
 	ctx, p.cancel = context.WithCancel(ctx)
-
-	var nextStdin io.ReadCloser
-	if p.stdin != nil {
-		// We don't want the first stage to actually close this, and
-		// `p.stdin` is not even necessarily an `io.ReadCloser`. So
-		// wrap it in a fake `io.ReadCloser` whose `Close()` method
-		// doesn't do anything.
-		//
-		// We could use `io.NopCloser()` for this purpose, but it has
-		// a subtle problem. If the first stage is a `Command`, then
-		// it wants to set the `exec.Cmd`'s `Stdin` to an `io.Reader`
-		// corresponding to `p.stdin`. If `Cmd.Stdin` is an
-		// `*os.File`, then the file descriptor can be passed to the
-		// subcommand directly; there is no need for this process to
-		// create a pipe and copy the data into the input side of the
-		// pipe. But if `p.stdin` is not an `*os.File`, then this
-		// optimization is prevented. And even worse, it also has the
-		// side effect that the goroutine that copies from `Cmd.Stdin`
-		// into the pipe doesn't terminate until that fd is closed by
-		// the writing side.
-		//
-		// That isn't always what we want. Consider, for example, the
-		// following snippet, where the subcommand's stdin is set to
-		// the stdin of the enclosing Go program, but wrapped with
-		// `io.NopCloser`:
-		//
-		//     cmd := exec.Command("ls")
-		//     cmd.Stdin = io.NopCloser(os.Stdin)
-		//     cmd.Stdout = os.Stdout
-		//     cmd.Stderr = os.Stderr
-		//     cmd.Run()
-		//
-		// In this case, we don't want the Go program to wait for
-		// `os.Stdin` to close (because `ls` isn't even trying to read
-		// from its stdin). But it does: `exec.Cmd` doesn't recognize
-		// that `Cmd.Stdin` is an `*os.File`, so it sets up a pipe and
-		// copies the data itself, and this goroutine doesn't
-		// terminate until `cmd.Stdin` (i.e., the Go program's own
-		// stdin) is closed. But if, for example, the Go program is
-		// run from an interactive shell session, that might never
-		// happen, in which case the program will fail to terminate,
-		// even after `ls` exits.
-		//
-		// So instead, in this special case, we wrap `p.stdin` in our
-		// own `nopCloser`, which behaves like `io.NopCloser`, except
-		// that `pipe.CommandStage` knows how to unwrap it before
-		// passing it to `exec.Cmd`.
-		nextStdin = newNopCloser(p.stdin)
-	}
-
-	for i, s := range p.stages {
-		if phs, ok := s.(StagePanicHandlerAware); ok && p.panicHandler != nil {
-			phs.SetPanicHandler(p.panicHandler)
-		}
-
-		var err error
-		stdout, err := s.Start(ctx, p.env, nextStdin)
-		if err != nil {
-			// Close the pipe that the previous stage was writing to.
-			// That should cause it to exit even if it's not minding
-			// its context.
-			if nextStdin != nil {
-				_ = nextStdin.Close()
-			}
-
-			// Kill and wait for any stages that have been started
-			// already to finish:
+	startedOK := false
+	defer func() {
+		if !startedOK {
 			p.cancel()
-			for _, s := range p.stages[:i] {
-				_ = s.Wait()
-			}
-			p.eventHandler(&Event{
-				Command: s.Name(),
-				Msg:     "failed to start pipeline stage",
-				Err:     err,
-			})
-			return fmt.Errorf("starting pipeline stage %q: %w", s.Name(), err)
 		}
-		nextStdin = stdout
+	}()
+
+	if len(p.stages) == 0 {
+		if p.stdout == nil {
+			// No stages and no destination: there is nothing to do
+			// and nowhere to put `p.stdin` even if it was set.
+			return nil
+		}
+		// No stages but a destination was configured: synthesize an
+		// identity-copy stage so that `WithStdin()` is drained into
+		// `WithStdout()`/`WithStdoutCloser()` and the destination
+		// closer (if any) is invoked.
+		p.stages = append(p.stages, Function(
+			"identity",
+			func(_ context.Context, _ Env, stdin io.Reader, stdout io.Writer) error {
+				if stdin == nil {
+					return nil
+				}
+				_, err := io.Copy(stdout, stdin)
+				return err
+			},
+		))
 	}
 
-	// If the pipeline was configured with a `stdout`, add a synthetic
-	// stage to copy the last stage's stdout to that writer:
-	if p.stdout != nil {
-		c := newIOCopier(p.stdout)
-		p.stages = append(p.stages, c)
-		// `ioCopier.Start()` never fails:
-		_, _ = c.Start(ctx, p.env, nextStdin)
+	// We need to decide how to start the stages, especially what
+	// pipes to use to connect adjacent stages (`os.Pipe()` vs.
+	// `io.Pipe()`) based on the two stages' requirements.
+	stageJoiners := make([]stageJoiner, len(p.stages)+1)
+
+	// Arrange for the input of the 0th stage to come from `p.stdin`:
+	stageJoiners[0].nextStdin = p.stdin
+
+	// Arrange for the output of the last stage to go to `p.stdout`:
+	stageJoiners[len(p.stages)].prevStdout = p.stdout
+
+	// closePipes closes all of the streams that are currently stored
+	// in the joiners. This should be called if startup fails. As we
+	// call `Stage.Start()` and pass that method streams, we clear
+	// them from the corresponding joiners to avoid closing them
+	// twice.
+	closePipes := func() {
+		for _, sj := range stageJoiners {
+			_ = sj.closePipe()
+		}
 	}
 
+	// Store the stages in the joiners, and verify that the stages'
+	// requirements are well-formed:
+	for i, s := range p.stages {
+		// Make sure that the stage's requirements are well-formed:
+		requirements := s.Requirements()
+		if err := requirements.Stdin.Validate(); err != nil {
+			closePipes()
+			return fmt.Errorf(
+				"stage %q has invalid stdin requirement: %w", s.Name(), err,
+			)
+		}
+		if err := requirements.Stdout.Validate(); err != nil {
+			closePipes()
+			return fmt.Errorf(
+				"stage %q has invalid stdout requirement: %w", s.Name(), err,
+			)
+		}
+
+		stageJoiners[i].nextStage = s
+		stageJoiners[i].nextStageReq = requirements
+		stageJoiners[i+1].prevStage = s
+		stageJoiners[i+1].prevStageReq = requirements
+	}
+
+	// Check that each of the stages' requirements are satisfiable:
+	for i := range stageJoiners {
+		if err := stageJoiners[i].validate(); err != nil {
+			closePipes()
+			return err
+		}
+	}
+
+	// Create the "inner" pipes (i.e, all but the first and last
+	// `stageJoiners`):
+	for i := 1; i < len(stageJoiners)-1; i++ {
+		if err := stageJoiners[i].createPipe(); err != nil {
+			closePipes()
+			return err
+		}
+	}
+
+	// We're about to start up the stages, one by one. If something
+	// goes wrong during that process, this function should be called
+	// to kill any stages that have already been started and to close
+	// any pipes that have not yet been passed to a stage. `i` is the
+	// index of the stage that failed to start. If the stage already
+	// received its streams, it is responsible for closing them.
+	abort := func(i int, err error) error {
+		closePipes()
+
+		// Kill and wait for any stages that have been started
+		// already to finish:
+		p.cancel()
+		for _, s := range p.stages[:i] {
+			_ = s.Wait()
+		}
+		p.eventHandler(&Event{
+			Command: p.stages[i].Name(),
+			Msg:     "failed to start pipeline stage",
+			Err:     err,
+		})
+		return fmt.Errorf(
+			"starting pipeline stage %q: %w", p.stages[i].Name(), err,
+		)
+	}
+
+	// Loop over all of the stages, starting them in order.
+	for i, s := range p.stages {
+		prevSJ := &stageJoiners[i]
+		nextSJ := &stageJoiners[i+1]
+
+		err := s.Start(ctx, p.stageOptions(), prevSJ.nextStdin, nextSJ.prevStdout)
+
+		// Even if that stage failed to start, we are no longer
+		// responsible for closing its streams:
+		prevSJ.nextStdin = nil
+		nextSJ.prevStdout = nil
+
+		if err != nil {
+			return abort(i, err)
+		}
+	}
+
+	startedOK = true
 	return nil
 }
 
 func (p *Pipeline) Output(ctx context.Context) ([]byte, error) {
+	if p.hasStarted() {
+		panic("attempt to get output from a pipeline that has already started")
+	}
+
+	if err := p.stdout.Close(); err != nil {
+		return nil, fmt.Errorf("closing previous stdout: %w", err)
+	}
+
 	var buf bytes.Buffer
-	p.stdout = nopWriteCloser{&buf}
+	p.stdout = Output(&buf)
 	err := p.Run(ctx)
 	return buf.Bytes(), err
 }
@@ -420,7 +491,9 @@ func (p *Pipeline) Wait() error {
 	return nil
 }
 
-// Run starts and waits for the commands in the pipeline.
+// Run starts and waits for the commands in the pipeline. If startup
+// fails, it returns the `Start()` error after `Start()` has performed
+// its failure cleanup.
 func (p *Pipeline) Run(ctx context.Context) error {
 	if err := p.Start(ctx); err != nil {
 		return err

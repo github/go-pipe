@@ -56,12 +56,8 @@ func ScannerFunction(
 					return err
 				}
 			}
-			if err := scanner.Err(); err != nil {
-				return err
-			}
-
-			return nil
-			// `p.AddFunction()` arranges for `stdout` to be closed.
+			return scanner.Err()
+			// The Function stage closes `stdout` if it owns it.
 		},
 	)
 }
